@@ -57,7 +57,7 @@ setup(
     author="Reijo Keskitalo and Graca Rocha",
     author_email='rtkeskitalo@lbl.gov',
     url='https://github.com/hpc4cmb/tod2flux',
-    packages=['tod2flux'],
+    packages=['tod2flux', 'tod2flux.planck'],
     ext_modules=extensions,
     scripts=scripts,
     license='BSD',
