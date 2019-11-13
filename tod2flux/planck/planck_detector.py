@@ -1,4 +1,6 @@
 
+import astropy.io.fits as pf
+
 from .. import Detector
 
 from .planck_beam import PlanckBeam
