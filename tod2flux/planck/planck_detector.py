@@ -1,10 +1,18 @@
+import os
+import sys
 
 import astropy.io.fits as pf
+import numpy as np
 
 from .. import Detector
 
 from .planck_beam import PlanckBeam
 from .planck_bandpass import PlanckBandpass
+
+
+DATADIR = os.path.join(os.path.dirname(__file__), "data")
+RIMOFILE_LFI = os.path.join(DATADIR, "RIMO_LFI.fits")
+RIMOFILE_HFI = os.path.join(DATADIR, "RIMO_HFI.fits")
 
 
 def parse_lfi_rimo(rimofile, detector):
@@ -55,11 +63,10 @@ def parse_hfi_rimo(rimofile, detector):
 
 
 class PlanckDetector(Detector):
-    
     def __init__(self, name):
         self.name = name
         if "LFI" in name:
-            self.rimofile = "RIMO_LFI_npipe5_symmetrized.fits"
+            self.rimofile = RIMOFILE_LFI
             self.epsilon = 0
             (
                 self.psi_uv,
@@ -71,7 +78,7 @@ class PlanckDetector(Detector):
                 self.sigma,
             ) = parse_lfi_rimo(self.rimofile, name)
         else:
-            self.rimofile = "RIMO_HFI_npipe5v16_symmetrized.fits"
+            self.rimofile = RIMOFILE_HFI
             (
                 self.psi_uv,
                 self.psi_pol,
@@ -82,6 +89,13 @@ class PlanckDetector(Detector):
                 self.epsilon,
                 self.sigma,
             ) = parse_hfi_rimo(self.rimofile, name)
-        self._beam = PlanckBeam(name)
+        self._beam = PlanckBeam(name, self.psi_uv, self.epsilon)
         self._bandpass = PlanckBandpass(name)
-        self.psi_pol = None
+
+    @property
+    def beam(self):
+        return self._beam
+
+    @property
+    def bandpass(self):
+        return self._bandpass

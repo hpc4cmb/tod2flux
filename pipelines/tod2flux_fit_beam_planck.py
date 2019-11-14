@@ -20,19 +20,13 @@ def parse_arguments():
         description="Fit Planck beams to data", fromfile_prefix_chars="@"
     )
     parser.add_argument(
-        "--input-path",
-        required=True,
-        help="Path to search small dataset files from",
+        "--input-path", required=True, help="Path to search small dataset files from",
     )
     parser.add_argument(
-        "--detector",
-        required=True,
-        help="Name of the detector to fit",
+        "--detector", required=True, help="Name of the detector to fit",
     )
     parser.add_argument(
-        "--database",
-        default="fluxes.db",
-        help="Name of the fit database",
+        "--database", default="fluxes.db", help="Name of the fit database",
     )
     args = parser.parse_args()
     print("All parameters:")
@@ -47,6 +41,7 @@ def main():
     # Load the detector
 
     detector = tod2flux.planck.Detector(args.detector)
+    print(detector)
 
     # Instantiate the fitter
 
@@ -61,17 +56,19 @@ def main():
     filenames = tod2flux.find_files(args.input_path, detector.name)
     print(
         "Found {} files for {} under {}".format(
-            len(filenames), detector.name, args.input_path),
+            len(filenames), detector.name, args.input_path
+        ),
         flush=True,
     )
 
     # Loop over the files
 
     for filename in filenames:
-        
+
         # Load the dataset
-        
+
         dataset = tod2flux.Dataset(filename, psi_pol=detector.psi_pol)
+        print(dataset)
 
         # Fit the detector over the data
 
@@ -81,15 +78,16 @@ def main():
 
         database.enter(fit)
 
+        break # DEBUG
+
     # Save the database
 
     database.save()
 
     print("Pipeline completed in {:.2f} s".format(time.time() - t0), flush=True)
-    
+
     return
 
 
 if __name__ == "__main__":
     main()
-    

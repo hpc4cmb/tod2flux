@@ -1,4 +1,3 @@
-
 import numpy as np
 from scipy.constants import degree, arcmin
 
@@ -23,7 +22,9 @@ class Detector:
         beam_solid_angle: arcmin^2
         output: MJy / sr
         """
-        integrated_temperature = temperature * self.beam.solid_angle * arcmin ** 2 * 1e-3
+        integrated_temperature = (
+            temperature * self.beam.solid_angle * arcmin ** 2 * 1e-3
+        )
         integrated_temperature_err = (
             (temperature_err * beam_solid_angle + temperature * beam.solid_angle_err)
             * arcmin ** 2
@@ -40,7 +41,14 @@ class Detector:
 
         return flux, flux_err
 
-    
+    def __str__(self):
+        result = "detector\n"
+        result += "  name = {}\n".format(self.name)
+        result += "  beam = {}\n".format(self.beam)
+        result += "  bandpass = {}\n".format(self.bandpass)
+        return result
+
+
 class Bandpass:
     """ Virtual class that defines the bandpass interface
     """
@@ -50,6 +58,12 @@ class Bandpass:
         """ Return the unit conversion coeffient
         """
         raise RuntimeError("Fell through to virtual method for mkcmb2mjysr")
+
+    def __str__(self):
+        result = "<bandpass; "
+        result += "mkcmb2mjysr = {}".format(self.mkcmb2mjysr())
+        result += ">"
+        return result
 
 
 class Beam:
@@ -67,3 +81,9 @@ class Beam:
         """ Return the beam solid angle error
         """
         raise RuntimeError("Fell through to virtual method for solid_angle error")
+
+    def __str__(self):
+        result = "<beam; "
+        result += "solid_angle = {}".format(self.solid_angle)
+        result += ">"
+        return result

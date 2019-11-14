@@ -9,7 +9,7 @@ class Dataset:
     """ A class representing a small dataset pertaining to one detector
     and one target.
     """
-    
+
     def __init__(self, filename, psi_pol=None):
         self.filename = filename
 
@@ -20,8 +20,7 @@ class Dataset:
         t2 = time.time()
         print("Done in {:6.2f} s".format(t2 - t1))
 
-        detector = hdulist[1].header["DETECTOR"]
-
+        self.detector = hdulist[1].header["DETECTOR"]
         self.target = hdulist[1].header["TARGET"]
         self.info = hdulist[1].header["INFO"]
         self.radius = hdulist[1].header["RADIUS"]
@@ -47,7 +46,9 @@ class Dataset:
             self.theta = np.append(self.theta, hdulist[i].data.field("THETA").flatten())
             self.phi = np.append(self.phi, hdulist[i].data.field("PHI").flatten())
             self.psi = np.append(self.psi, hdulist[i].data.field("PSI").flatten())
-            self.signal = np.append(self.signal, hdulist[i].data.field("SIGNAL").flatten())
+            self.signal = np.append(
+                self.signal, hdulist[i].data.field("SIGNAL").flatten()
+            )
 
         # Remove possible zero padding in the arrays
         ind = self.time != 0
@@ -77,5 +78,26 @@ class Dataset:
         self.size = self.signal.size
 
         hdulist.close()
-        
+
         return
+
+    def __str__(self):
+        result = "small dataset:\n"
+        result += "  Target = '{}'\n".format(self.target)
+        result += "  Info = '{}'\n".format(self.info)
+        result += "  (lon, lat) = ({}, {}) degrees\n".format(
+            self.target_lon, self.target_lat
+        )
+        result += "  Search radius = {}'\n".format(self.radius)
+        result += "  total time = {:5.2f} min\n".format(self.size / self.fsample / 60)
+        result += "  Detector = '{}'\n".format(self.detector)
+        result += "  sigma = {} mK\n".format(self.sigma)
+        """
+        result += "  psi_pol == {:5.3f} deg\n".format(self.psi_pol)
+        print("      psi_ell == {:5.3f} deg".format(psi_ell))
+        print("         FWHM == {:5.3f}'".format(fwhm0))
+        print("  solid angle == {:5.3f} sq arc min".format(bsa0))
+        print("  ellipticity == {:5.3f}".format(ellipticity0))
+        print(" MJy / mK_CMB == {:.4g}".format(mkcmb2mjysr))
+        """
+        return result

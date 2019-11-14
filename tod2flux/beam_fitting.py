@@ -1,7 +1,7 @@
-
 class DetectorFitter:
     """ A class that fits 
     """
+
     def __init__(self, detector):
         self.detector = detector
 
