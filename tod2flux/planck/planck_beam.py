@@ -31,8 +31,8 @@ def parse_gridded_beam(
     pol=False,
     nx=None,
     ny=None,
-    xcentre=None,
-    ycentre=None,
+    xcenter=None,
+    ycenter=None,
     xdelta=None,
     ydelta=None,
 ):
@@ -54,69 +54,76 @@ def parse_gridded_beam(
 
     hdulist = pf.open(beamfile)
 
-    hdr = hdulist[ihdu].header
+    header = hdulist[ihdu].header
 
-    if "baseidx" in hdr:
-        coord_base = hdr["BASEIDX"]
+    if "baseidx" in header:
+        coord_base = header["BASEIDX"]
 
     print("Coord_base : ", coord_base)
 
     if not nx:
-        if "nx" in hdr:
-            nx = hdr["NX"]
+        if "nx" in header:
+            nx = header["NX"]
         else:
             print("Warning: Bypassing bad HIERARCH card by explicit indexing")
-            nx = hdr[22]
-            ny = hdr[23]
-            xcentre = hdr[24]
-            ycentre = hdr[25]
-            xdelta = hdr[26] / arcmin
-            ydelta = hdr[27] / arcmin
+            import pdb
+
+            pdb.set_trace()
+            nx = header[22]
+            ny = header[23]
+            xcenter = header[24]
+            ycenter = header[25]
+            xdelta = header[26] / arcmin
+            ydelta = header[27] / arcmin
 
     if not ny:
-        ny = hdr["NY"]
+        ny = header["NY"]
 
-    if not xcentre:
-        if "XCENTRE" in hdr:
-            xcentre = hdr["XCENTRE"]
-        elif "XCENTER" in hdr:
-            xcentre = hdr["XCENTER"]
+    if not xcenter:
+        if "XCENTRE" in header:
+            xcenter = header["XCENTRE"]
+        elif "XCENTER" in header:
+            xcenter = header["XCENTER"]
         else:
             raise Exception("{} does not specifify grid center coordinate")
-    if not ycentre:
-        if "YCENTRE" in hdr:
-            ycentre = hdr["YCENTRE"]
-        elif "XCENTER" in hdr:
-            ycentre = hdr["YCENTER"]
+    if not ycenter:
+        if "YCENTRE" in header:
+            ycenter = header["YCENTRE"]
+        elif "XCENTER" in header:
+            ycenter = header["YCENTER"]
         else:
             raise Exception("{} does not specifify grid center coordinate")
 
     if not xdelta:
-        xdelta = hdr["XDELTA"] / arcmin
+        xdelta = header["XDELTA"] / arcmin
     if not ydelta:
-        ydelta = hdr["YDELTA"] / arcmin
+        ydelta = header["YDELTA"] / arcmin
 
-    if "fwhm" in hdr:
+    if "fwhm" in header:
         eg = []  # elliptical gaussian params
-        eg.append(hdr["fwhm"])
-        eg.append(hdr["ellipticity"])
-        eg.append(hdr["psi_ell"])
+        eg.append(header["fwhm"])
+        eg.append(header["ellipticity"])
+        eg.append(header["psi_ell"])
     else:
         eg = None
 
-    grbeam_x = (np.arange(nx) - xcentre + coord_base) * xdelta
-    grbeam_y = (np.arange(ny) - ycentre + coord_base) * ydelta
+    grbeam_x = (np.arange(nx) - xcenter + coord_base) * xdelta
+    grbeam_y = (np.arange(ny) - ycenter + coord_base) * ydelta
 
     grbeam = np.reshape(hdulist[ihdu].data.field(0).ravel(), [ny, nx])
     if pol:
         grbeam_Q = np.reshape(hdulist[ihdu].data.field(1), [ny, nx])
         grbeam_U = np.reshape(hdulist[ihdu].data.field(2), [ny, nx])
+    else:
+        grbeam_Q = None
+        grbeam_U = None
     beammax = np.amax(grbeam)
     # if np.abs(beammax - 1) > 1.1:
     grbeam /= beammax
 
     hdulist.close()
 
+    """
     while nx > 800:
         # Cannot interpolate too large grid
         print("Pruning the grid ...")
@@ -128,6 +135,7 @@ def parse_gridded_beam(
             grbeam_Q = grbeam_Q[ind, ind]
             grbeam_U = grbeam_U[ind, ind]
         nx, ny = len(grbeam_x), len(grbeam_y)
+    """
 
     xdelta = (grbeam_x[-1] - grbeam_x[0]) / (nx - 1)
     ydelta = (grbeam_y[-1] - grbeam_y[0]) / (ny - 1)
@@ -136,65 +144,164 @@ def parse_gridded_beam(
 
     # construct a linear interpolator on the map
 
+    print("Constructing linear interpolator for the {} x {} beam map".format(nx, ny))
+    grbeam_interp = scipy.interpolate.RectBivariateSpline(
+        grbeam_x, grbeam_y, grbeam.T, kx=1, ky=1
+    )
+
+    if pol:
+        grbeam_interp_Q = scipy.interpolate.RectBivariateSpline(
+            grbeam_x, grbeam_y, grbeam_Q.T, kx=1, ky=1
+        )
+        grbeam_interp_U = scipy.interpolate.RectBivariateSpline(
+            grbeam_x, grbeam_y, grbeam_U.T, kx=1, ky=1
+        )
+    else:
+        grbeam_interp_Q = None
+        grbeam_interp_U = None
+
+    return (
+        nx,
+        ny,
+        xcenter,
+        ycenter,
+        xdelta,
+        ydelta,
+        grbeam_x,
+        grbeam_y,
+        grbeam,
+        grbeam_Q,
+        grbeam_U,
+        beam_solid_angle,
+        grbeam_interp,
+        grbeam_interp_Q,
+        grbeam_interp_U,
+        eg,
+    )
+
+
+def parse_polar_gridded_beam(
+    beamfile,
+    ihdu=1,
+    pol=False,
+    nx=1201,
+    ny=1201,
+    xcenter=600,
+    ycenter=600,
+    xdelta=None,
+    ydelta=None,
+    coord_base=0,
+):
+    """
+    Parse the contents of a fits file containing a circular beam map
+
+    Inputs:
+    beamfile -- beam file name
+    ihdu (1) -- fits extension to load the beam from
+    coord_base (0) -- indexing convention 0 (C) or 1 (Fortran) based
+    """
+    print("Reading polar gridded beam from " + beamfile)
+
+    hdulist = pf.open(beamfile)
+
+    header = hdulist[ihdu].header
+
+    print("Coord_base : ", coord_base)
+
+    ntheta = header["Ntheta"]
+    nphi = header["Nphi"]
+    theta_min = header["Mintheta"]
+    theta_max = header["Maxtheta"]
+    phi_step = 2 * np.pi / (nphi - 1)
+    theta_step = (theta_max - theta_min) / (ntheta - 1)
+
+    # Find the largest square grid that will fit the circular map
+
+    rmax = theta_max / np.sqrt(2)
+
+    xdelta = 2 * rmax / (nx - 1)
+    ydelta = 2 * rmax / (ny - 1)
+
+    eg = None
+
+    grbeam_x = (np.arange(nx) - xcenter + coord_base) * xdelta
+    grbeam_y = (np.arange(ny) - ycenter + coord_base) * ydelta
+
+    polarbeam = np.reshape(hdulist[ihdu].data.field(0).ravel(), [ntheta, nphi])
+    if pol:
+        polarbeam_Q = np.reshape(hdulist[ihdu].data.field(1).ravel(), [ntheta, nphi])
+        polarbeam_U = np.reshape(hdulist[ihdu].data.field(2).ravel(), [ntheta, nphi])
+    beammax = np.amax(polarbeam)
+    polarbeam /= beammax
+
+    hdulist.close()
+
+    # Now sample the beam onto a square grid
+
     xgrid, ygrid = np.meshgrid(grbeam_x, grbeam_y)
+    grbeam_theta = np.sqrt(xgrid ** 2 + ygrid ** 2)
+    grbeam_phi = np.arctan2(ygrid, xgrid) % (2 * np.pi)
+    itheta = ((grbeam_theta - theta_min) / theta_step).astype(np.int)
+    itheta[itheta > ntheta - 1] = ntheta - 1
+    iphi = (grbeam_phi / phi_step).astype(np.int)
+
+    grbeam = polarbeam[itheta, iphi].copy()
+    if pol:
+        grbeam_Q = polarbeam_Q[itheta, iphi].copy()
+        grbeam_U = polarbeam_U[itheta, iphi].copy()
+    else:
+        grbeam_Q = None
+        grbeam_U = None
+
+    # Convert the steps to arcmin
+
+    xdelta /= arcmin
+    ydelta /= arcmin
+
+    beam_solid_angle = np.sum(grbeam) * xdelta * ydelta
+
+    # construct a linear interpolator on the map
 
     points = np.array([xgrid.flatten(), ygrid.flatten()]).T
 
     print("Constructing linear interpolator for the {} x {} beam map".format(nx, ny))
-    grbeam_interp = scipy.interpolate.LinearNDInterpolator(
-        points, grbeam.flatten(), fill_value=0
+    grbeam_interp = scipy.interpolate.RectBivariateSpline(
+        grbeam_x / arcmin, grbeam_y / arcmin, grbeam.T, kx=1, ky=1
     )
 
     if pol:
-        print(
-            "Constructing linear interpolator for the {} x {} polarized beam map".format(
-                nx, ny
-            )
+        grbeam_interp_Q = scipy.interpolate.RectBivariateSpline(
+            grbeam_x / arcmin, grbeam_y / arcmin, grbeam_Q.T, kx=1, ky=1
         )
-        grbeam_interp_Q = scipy.interpolate.LinearNDInterpolator(
-            points, grbeam_Q.flatten(), fill_value=0
-        )
-        grbeam_interp_U = scipy.interpolate.LinearNDInterpolator(
-            points, grbeam_U.flatten(), fill_value=0
-        )
-
-        return (
-            nx,
-            ny,
-            xcentre,
-            ycentre,
-            xdelta,
-            ydelta,
-            grbeam_x,
-            grbeam_y,
-            grbeam,
-            grbeam_Q,
-            grbeam_U,
-            beam_solid_angle,
-            grbeam_interp,
-            grbeam_interp_Q,
-            grbeam_interp_U,
-            eg,
+        grbeam_interp_U = scipy.interpolate.RectBivariateSpline(
+            grbeam_x / arcmin, grbeam_y / arcmin, grbeam_U.T, kx=1, ky=1
         )
     else:
-        return (
-            nx,
-            ny,
-            xcentre,
-            ycentre,
-            xdelta,
-            ydelta,
-            grbeam_x,
-            grbeam_y,
-            grbeam,
-            beam_solid_angle,
-            grbeam_interp,
-            eg,
-        )
+        grbeam_interp_Q = None
+        grbeam_interp_U = None
+
+    return (
+        nx,
+        ny,
+        xcenter,
+        ycenter,
+        xdelta,
+        ydelta,
+        grbeam_x,
+        grbeam_y,
+        grbeam,
+        grbeam_Q,
+        grbeam_U,
+        beam_solid_angle,
+        grbeam_interp,
+        grbeam_interp_Q,
+        grbeam_interp_U,
+        eg,
+    )
 
 
 class PlanckBeam(Beam):
-    def __init__(self, detector_name, psi_uv, epsilon, pol=False):
+    def __init__(self, detector_name, psi_uv, epsilon, fwhm_arcmin, pol=False):
         self.detector_name = detector_name
         self.psi_uv = psi_uv
         self.epsilon = epsilon
@@ -207,6 +314,7 @@ class PlanckBeam(Beam):
         self.r = -1
         self.offset = None
         self.base_index = 0
+        self.fwhm_arcmin = fwhm_arcmin
         self._solid_angle = None
         if "LFI" in detector_name:
             self.load_lfi_beam()
@@ -214,7 +322,7 @@ class PlanckBeam(Beam):
             self.load_hfi_beam()
         return
 
-    def get_gr_dxx_beam(self, x, y, dummy, pol=False):
+    def get_gr_dxx_beam(self, x, y, pol=False, grid=False):
         """
         Return the value of the gridded beam in the Dxx coordinate system.
 
@@ -230,15 +338,17 @@ class PlanckBeam(Beam):
         points = np.array([self.xsign * x, self.ysign * y]).T
 
         if pol:
-            return (
-                self.grbeam_interp(points),
-                self.grbeam_interp_Q(points),
-                self.grbeam_interp_U(points),
+            return np.vstack(
+                [
+                    self.grbeam_interp(x, y, grid=grid),
+                    self.grbeam_interp_Q(x, y, grid=grid),
+                    self.grbeam_interp_U(x, y, grid=grid),
+                ]
             )
         else:
-            return self.grbeam_interp(points)
+            return self.grbeam_interp(x, y, grid=grid)
 
-    def get_gr_pxx_beam(self, x, y, dummy, pol=False):
+    def get_gr_pxx_beam(self, x, y, pol=False, grid=False):
         """
         Sample the interpolated square map at (x, y)
         """
@@ -256,7 +366,7 @@ class PlanckBeam(Beam):
         xx = xtemp * np.cos(psi_pol * degree) + ytemp * np.sin(psi_pol * degree)
         yy = -xtemp * np.sin(psi_pol * degree) + ytemp * np.cos(psi_pol * degree)
 
-        return self.get_gr_dxx_beam(xx, yy, None, pol=pol)
+        return self.get_gr_dxx_beam(xx, yy, pol=pol, grid=grid)
 
     def load_hfi_beam(self):
         self.instrument = "HFI"
@@ -283,17 +393,21 @@ class PlanckBeam(Beam):
         (
             self.nx,
             self.ny,
-            self.xcentre,
-            self.ycentre,
+            self.xcenter,
+            self.ycenter,
             self.xdelta,
             self.ydelta,
             self.grbeam_x,
             self.grbeam_y,
             self.grbeam,
+            self.grbeam_Q,
+            self.grbeam_U,
             self.beam_solid_angle,
             self.grbeam_interp,
+            self.grbeam_interp_Q,
+            self.grbeam_interp_U,
             eg,
-        ) = parse_gridded_beam(beamfile, coord_base=self.base_index)
+        ) = parse_polar_gridded_beam(beamfile, coord_base=self.base_index, pol=False)
 
         if eg != None:
             self.fwhm, self.ellipticity, self.psi_ell = eg
@@ -332,40 +446,24 @@ class PlanckBeam(Beam):
         if not os.path.isfile(beamfile):
             raise Exception("ERROR: beamfile, {}, does not exist!".format(beamfile))
 
-        if self.pol:
-            (
-                self.nx,
-                self.ny,
-                self.xcentre,
-                self.ycentre,
-                self.xdelta,
-                self.ydelta,
-                self.grbeam_x,
-                self.grbeam_y,
-                self.grbeam,
-                self.grbeam_Q,
-                self.grbeam_U,
-                self.beam_solid_angle,
-                self.grbeam_interp,
-                self.grbeam_interp_Q,
-                self.grbeam_interp_U,
-                eg,
-            ) = parse_gridded_beam(beamfile, pol=True, coord_base=self.base_index)
-        else:
-            (
-                self.nx,
-                self.ny,
-                self.xcentre,
-                self.ycentre,
-                self.xdelta,
-                self.ydelta,
-                self.grbeam_x,
-                self.grbeam_y,
-                self.grbeam,
-                self.beam_solid_angle,
-                self.grbeam_interp,
-                eg,
-            ) = parse_gridded_beam(beamfile, coord_base=self.base_index)
+        (
+            self.nx,
+            self.ny,
+            self.xcenter,
+            self.ycenter,
+            self.xdelta,
+            self.ydelta,
+            self.grbeam_x,
+            self.grbeam_y,
+            self.grbeam,
+            self.grbeam_Q,
+            self.grbeam_U,
+            self.beam_solid_angle,
+            self.grbeam_interp,
+            self.grbeam_interp_Q,
+            self.grbeam_interp_U,
+            eg,
+        ) = parse_gridded_beam(beamfile, pol=self.pol, coord_base=self.base_index)
 
         if eg != None:
             self.fwhm, self.ellipticity, self.psi_ell = eg
@@ -374,7 +472,7 @@ class PlanckBeam(Beam):
 
         return
 
-    def get_eg_beam(self, x, y, dummy):
+    def get_eg_beam(self, x, y):
         """
         Return the elliptical Gaussian beam based on the stored gaussian parameters
         """
@@ -404,17 +502,17 @@ class PlanckBeam(Beam):
     def geometric_fwhm(self):
         return np.sqrt(self.beam_solid_angle * 4 * np.log(2) / np.pi)
 
-    def get_psf(self, x, y, dummy):
+    def get_psf(self, x, y):
         """
         Return the point spread function
         
         Inputs:
         x, y -- arrays of same shape, containing the coordinates in arc minutes
         """
+        # get_beam is defined upon initialization
+        return self.get_beam(-x, -y)
 
-        return self.get_beam(-x, -y, None)  # get_beam is defined upon initialization
-
-    def get_beam_buffered(self, x, y, dummy, pol=False):
+    def get_beam_buffered(self, x, y, pol=False):
         """
         Evaluate the beam using buffers to reduce the memory requirement
 

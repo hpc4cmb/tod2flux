@@ -34,9 +34,19 @@ def parse_lfi_rimo(rimofile, detector):
     fsample = rimo[1].data[ind]["F_SAMP"][0]
     net = rimo[1].data[ind]["NET"][0]
     sigma = net * np.sqrt(fsample)
+    # The RIMO does not contain nominal frequencies ...
+    horn = int(detector[3:5])
+    if horn in range(27, 29):
+        frequency = 30
+    elif horn in range(24, 27):
+        frequency = 44
+    elif horn in range(18, 24):
+        frequency = 70
+    else:
+        raise RuntimeError("Cannot determine frequency for {}".format(detector))
     rimo.close()
 
-    return psi_uv, psi_pol, fwhm, ellipticity, psi_ell, fsample, sigma
+    return psi_uv, psi_pol, fwhm, ellipticity, psi_ell, fsample, sigma, frequency
 
 
 def parse_hfi_rimo(rimofile, detector):
@@ -57,9 +67,20 @@ def parse_hfi_rimo(rimofile, detector):
     epsilon = rimo[1].data[ind]["EPSILON"][0]
     net = rimo[1].data[ind]["NET"][0]
     sigma = net * np.sqrt(fsample)
-    rimo.close()
+    # The RIMO does not contain nominal frequencies ...
+    frequency = int(detector[:3])
 
-    return psi_uv, psi_pol, fwhm, ellipticity, psi_ell, fsample, epsilon, sigma
+    return (
+        psi_uv,
+        psi_pol,
+        fwhm,
+        ellipticity,
+        psi_ell,
+        fsample,
+        epsilon,
+        sigma,
+        frequency,
+    )
 
 
 class PlanckDetector(Detector):
@@ -69,27 +90,29 @@ class PlanckDetector(Detector):
             self.rimofile = RIMOFILE_LFI
             self.epsilon = 0
             (
-                self.psi_uv,
-                self.psi_pol,
-                self.fwhm,
+                self.psi_uv_deg,
+                self._psi_pol_deg,
+                self.fwhm_arcmin,
                 self.ellipticity,
-                self.psi_ell,
-                self.fsample,
-                self.sigma,
+                self.psi_ell_deg,
+                self._fsample,
+                self._sigma_KCMB,
+                self.frequency,
             ) = parse_lfi_rimo(self.rimofile, name)
         else:
             self.rimofile = RIMOFILE_HFI
             (
-                self.psi_uv,
-                self.psi_pol,
-                self.fwhm,
+                self.psi_uv_deg,
+                self._psi_pol_deg,
+                self.fwhm_arcmin,
                 self.ellipticity,
-                self.psi_ell,
-                self.fsample,
+                self.psi_ell_deg,
+                self._fsample,
                 self.epsilon,
-                self.sigma,
+                self._sigma_KCMB,
+                self.frequency,
             ) = parse_hfi_rimo(self.rimofile, name)
-        self._beam = PlanckBeam(name, self.psi_uv, self.epsilon)
+        self._beam = PlanckBeam(name, self.psi_uv_deg, self.epsilon, self.fwhm_arcmin)
         self._bandpass = PlanckBandpass(name)
 
     @property
@@ -99,3 +122,23 @@ class PlanckDetector(Detector):
     @property
     def bandpass(self):
         return self._bandpass
+
+    @property
+    def psi_pol_deg(self):
+        return self._psi_pol_deg
+
+    @property
+    def sigma_KCMB(self):
+        return self._sigma_KCMB
+
+    @property
+    def fsample(self):
+        return self._fsample
+
+    @property
+    def pol_efficiency(self):
+        return (1 - self.epsilon) / (1 + self.epsilon)
+
+    @property
+    def nominal_frequency(self):
+        return self.frequency

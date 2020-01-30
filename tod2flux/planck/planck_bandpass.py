@@ -386,5 +386,6 @@ class PlanckBandpass(Bandpass):
         # correction['cc'] : color correction function for powerlaw spectra
         # correction['cfreq'] : effective central frequency
 
+    @property
     def mkcmb2mjysr(self):
         return self.correction["mkcmb2mjysr"]

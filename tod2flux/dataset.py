@@ -1,3 +1,5 @@
+import os
+import sys
 import time
 
 import astropy.io.fits as pf
@@ -10,58 +12,57 @@ class Dataset:
     and one target.
     """
 
-    def __init__(self, filename, psi_pol=None):
+    def __init__(self, filename):
         self.filename = filename
+        self.name = os.path.basename(filename)
 
-        print("Reading {} ... ".format(filename))
+        print("Reading {} ... ".format(filename), flush=True)
         t1 = time.time()
 
         hdulist = pf.open(filename)
         t2 = time.time()
-        print("Done in {:6.2f} s".format(t2 - t1))
+        print("Done in {:6.2f} s".format(t2 - t1), flush=True)
 
         self.detector = hdulist[1].header["DETECTOR"]
         self.target = hdulist[1].header["TARGET"]
         self.info = hdulist[1].header["INFO"]
-        self.radius = hdulist[1].header["RADIUS"]
-        self.target_lon = hdulist[1].header["LON"]
-        self.target_lat = hdulist[1].header["LAT"]
-        self.target_phi = self.target_lon * degree
-        self.target_theta = (90 - self.target_lat) * degree
+        self.radius_arcmin = hdulist[1].header["RADIUS"]
+        self.target_lon_deg = hdulist[1].header["LON"]
+        self.target_lat_deg = hdulist[1].header["LAT"]
+        self.target_phi = self.target_lon_deg * degree
+        self.target_theta = (90 - self.target_lat_deg) * degree
         if "SIGMA" in hdulist[1].columns.names:
-            self.sigma = hdulist[1].header["SIGMA"] * 1e3
+            self.sigma_mKCMB = hdulist[1].header["SIGMA"] * 1e3
         else:
-            self.sigma = None
+            self.sigma_mKCMB = None
         self.fsample = hdulist[1].header["FSAMPLE"]
 
-        self.time = hdulist[1].data.field("TIME").flatten()
+        self.time_s = hdulist[1].data.field("TIME").flatten()
         self.theta = hdulist[1].data.field("THETA").flatten()
         self.phi = hdulist[1].data.field("PHI").flatten()
         self.psi = hdulist[1].data.field("PSI").flatten()
-        self.signal = hdulist[1].data.field("SIGNAL").flatten()
+        self.signal_mK = hdulist[1].data.field("SIGNAL").flatten()
 
-        print("Concatenating the arrays ...")
+        print("Concatenating the arrays ...", flush=True)
         for i in range(2, len(hdulist)):
-            self.time = np.append(self.time, hdulist[i].data.field("TIME").flatten())
+            self.time_s = np.append(
+                self.time_s, hdulist[i].data.field("TIME").flatten()
+            )
             self.theta = np.append(self.theta, hdulist[i].data.field("THETA").flatten())
             self.phi = np.append(self.phi, hdulist[i].data.field("PHI").flatten())
             self.psi = np.append(self.psi, hdulist[i].data.field("PSI").flatten())
-            self.signal = np.append(
-                self.signal, hdulist[i].data.field("SIGNAL").flatten()
+            self.signal_mK = np.append(
+                self.signal_mK, hdulist[i].data.field("SIGNAL").flatten()
             )
 
         # Remove possible zero padding in the arrays
-        ind = self.time != 0
+        ind = self.time_s != 0
         if np.sum(ind) < len(ind):
-            self.time = self.time[ind]
+            self.time_s = self.time_s[ind]
             self.theta = self.theta[ind]
             self.phi = self.phi[ind]
             self.psi = self.psi[ind]
-            self.signal = self.signal[ind]
-
-        if psi_pol is not None:
-            # remove polarizer angle from psi
-            self.psi -= (psi_pol + 180) * degree
+            self.signal_mK = self.signal_mK[ind]
 
         """
         # Correct for a bug in the HFI pointing library
@@ -73,9 +74,9 @@ class Dataset:
         """
 
         # To mK !!!
-        self.signal *= 1e3
+        self.signal_mK *= 1e3
 
-        self.size = self.signal.size
+        self.size = self.signal_mK.size
 
         hdulist.close()
 
@@ -86,14 +87,13 @@ class Dataset:
         result += "  Target = '{}'\n".format(self.target)
         result += "  Info = '{}'\n".format(self.info)
         result += "  (lon, lat) = ({}, {}) degrees\n".format(
-            self.target_lon, self.target_lat
+            self.target_lon_deg, self.target_lat_deg
         )
-        result += "  Search radius = {}'\n".format(self.radius)
+        result += "  Search radius = {}'\n".format(self.radius_arcmin)
         result += "  total time = {:5.2f} min\n".format(self.size / self.fsample / 60)
         result += "  Detector = '{}'\n".format(self.detector)
-        result += "  sigma = {} mK\n".format(self.sigma)
+        result += "  sigma = {} mK\n".format(self.sigma_mKCMB)
         """
-        result += "  psi_pol == {:5.3f} deg\n".format(self.psi_pol)
         print("      psi_ell == {:5.3f} deg".format(psi_ell))
         print("         FWHM == {:5.3f}'".format(fwhm0))
         print("  solid angle == {:5.3f} sq arc min".format(bsa0))
