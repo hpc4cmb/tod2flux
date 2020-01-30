@@ -296,7 +296,11 @@ def get_correction(
         detfilter = det.upper()
         cfreq = np.float(det[0:3]) * 1e9
 
-    hdulist = pf.open(rimofile)
+    try:
+        hdulist = pf.open(rimofile)
+    except OSError as e:
+        print("Failed to open {} : '{}'".format(rimofile, e))
+        raise
 
     found = False
     for hdu in hdulist:

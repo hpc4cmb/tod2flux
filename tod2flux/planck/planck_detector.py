@@ -18,7 +18,11 @@ RIMOFILE_HFI = os.path.join(DATADIR, "RIMO_HFI.fits")
 def parse_lfi_rimo(rimofile, detector):
     print("Reading the LFI RIMO from {}".format(rimofile))
 
-    rimo = pf.open(rimofile)
+    try:
+        rimo = pf.open(rimofile)
+    except OSError as e:
+        print("Failed to open {} : '{}'".format(rimofile, e))
+        raise
     ind = np.array(rimo[1].data.field("detector").flatten()) == detector
     if sum(ind) == 0:
         ind = np.array(rimo[1].data.field("detector").flatten()) == "{:8}".format(
@@ -52,7 +56,11 @@ def parse_lfi_rimo(rimofile, detector):
 def parse_hfi_rimo(rimofile, detector):
     print("Reading the HFI RIMO from {}".format(rimofile))
 
-    rimo = pf.open(rimofile)
+    try:
+        rimo = pf.open(rimofile)
+    except OSError as e:
+        print("Failed to open {} : '{}'".format(rimofile, e))
+        raise
     ind = np.array(rimo[1].data.field("detector").flatten()) == detector
     if np.sum(ind) == 0:
         print("ERROR: {} does not match any of:".format(detector))

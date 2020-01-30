@@ -52,7 +52,11 @@ def parse_gridded_beam(
     if coord_base not in [0, 1]:
         raise Exception("Unsupported coord_base: " + str(coord_base))
 
-    hdulist = pf.open(beamfile)
+    try:
+        hdulist = pf.open(beamfile)
+    except OSError as e:
+        print("Failed to open {} : '{}'".format(beamfile, e))
+        raise
 
     header = hdulist[ihdu].header
 
@@ -202,7 +206,11 @@ def parse_polar_gridded_beam(
     """
     print("Reading polar gridded beam from " + beamfile)
 
-    hdulist = pf.open(beamfile)
+    try:
+        hdulist = pf.open(beamfile)
+    except OSError as e:
+        print("Failed to open {} : '{}'".format(beamfile, e))
+        raise
 
     header = hdulist[ihdu].header
 

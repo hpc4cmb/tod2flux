@@ -19,7 +19,11 @@ class Dataset:
         print("Reading {} ... ".format(filename), flush=True)
         t1 = time.time()
 
-        hdulist = pf.open(filename)
+        try:
+            hdulist = pf.open(filename)
+        except OSError as e:
+            print("Failed to open {} : '{}'".format(filename, e))
+            raise
         t2 = time.time()
         print("Done in {:6.2f} s".format(t2 - t1), flush=True)
 

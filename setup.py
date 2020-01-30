@@ -11,7 +11,7 @@ from setuptools.command.test import test as TestCommand
 
 import numpy as np
 
-# extensions to builde
+# extensions to build
 
 ext_kernels = Extension(
     "tod2flux.kernels",
