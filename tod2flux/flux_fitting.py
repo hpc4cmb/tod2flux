@@ -139,6 +139,8 @@ class FluxFitter:
                 freq, angle, angle_err, label="scan {}".format(iscan), fmt="o-",
             )
             axes[2].set_ylim([-20, 200])
+            axes[2].axhline(0, linestyle="--", color="k", zorder=0)
+            axes[2].axhline(180, linestyle="--", color="k", zorder=0)
         for ax in axes:
             ax.set_xscale("log")
             ax.set_xticks(freq)
@@ -150,7 +152,7 @@ class FluxFitter:
         return
 
     def _analyze_residual(self, target, residuals, residual_errors, ccstring):
-        for single in (False,):  # False:
+        for single in True, False:
             if single:
                 ssingle = "single"
             else:

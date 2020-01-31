@@ -167,6 +167,7 @@ class DetectorFitter:
             dataset.target, self.detector.name, iscan
         )
         plt.savefig(fname_plot)
+        plt.close()
         print("Plot saved in", fname_plot, flush=True)
 
         return self.fits

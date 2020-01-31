@@ -86,15 +86,18 @@ def main():
     # Loop over the files
 
     ifile = -1
-    my_fits = []
 
-    for detector_name, detector_files in filenames.items():
-        print(
-            "Found {} files for {} under {}".format(
+    for detector_name in sorted(filenames.keys()):
+        detector_files = filenames[detector_name]
+        my_fits = []
+
+        if comm.rank == 0:
+            print(
+                "Found {} files for {} under {}".format(
                 len(detector_files), detector_name, args.input_path
-            ),
-            flush=True,
-        )
+                ),
+                flush=True,
+            )
 
         # Instantiate detector
 
@@ -139,16 +142,15 @@ def main():
             if len(fits) != 0:
                 my_fits.append(fits)
 
-    all_fits = comm.gather(my_fits)
-    if comm.rank == 0:
-        for fits in all_fits:
-            for fit in fits:
-                database.enter(fit)
+        all_fits = comm.gather(my_fits)
+        if comm.rank == 0:
+            for fits in all_fits:
+                for fit in fits:
+                    database.enter(fit)
+            # Save the database after every detector
+            database.save()
 
-    # Save the database
-
     if comm.rank == 0:
-        database.save()
         print("Pipeline completed in {:.2f} s".format(time.time() - t0), flush=True)
 
     return

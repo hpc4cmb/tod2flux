@@ -29,6 +29,16 @@ class Database:
     def __len__(self):
         return len(self.db)
 
+    def get_datasets(self, target=None, detector=None):
+        datasets = []
+        for dataset, fits in self.db.items():
+            if target is not None and fits[0].target != target:
+                continue
+            if detector is not None and fits[0].detector != detector:
+                continue
+            datasets.append(fits)
+        return datasets
+
     def enter(self, fits):
         """ Write the fits into the database.
 
