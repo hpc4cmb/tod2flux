@@ -82,16 +82,17 @@ class DetectorFitter:
         theta = dataset.theta[ind]
         phi = dataset.phi[ind]
 
-        good = self.crop_data(target_theta, target_phi, theta, phi)
-        times = times[good]
-        if times.size < 10:
+        outer, inner = self.crop_data(target_theta, target_phi, theta, phi)
+        times = times[outer]
+        print("\nOUTER = {}, INNER = {}\n".format(np.sum(outer), np.sum(inner)))
+        if np.sum(inner) < 10:
             print("Empty scan, no processing done", flush=True)
             return None
-        theta = theta[good].copy()
-        phi = phi[good].copy()
+        theta = theta[outer].copy()
+        phi = phi[outer].copy()
 
-        psi = dataset.psi[ind][good].copy()
-        signal_mK = dataset.signal_mK[ind][good].copy()
+        psi = dataset.psi[ind][outer].copy()
+        signal_mK = dataset.signal_mK[ind][outer].copy()
 
         psi_pol = np.median(psi)
         # Remove the polarizer angle from psi
@@ -201,7 +202,7 @@ class DetectorFitter:
             self.radius,
         )
         good = hitmap != 0
-        best = hitmap > np.median(hitmap[good])
+        best = hitmap >= np.median(hitmap[good])
         offset = np.median(sigmap[best])
         sigmap[good] -= offset
         amp = np.amax(sigmap[best]) * 0.9
@@ -371,13 +372,15 @@ class DetectorFitter:
         )
         vec = np.transpose(vec)
 
-        cos_lim = np.cos(self.fit_radius_arcmin * arcmin)
+        cos_lim_outer = np.cos(self.fit_radius_arcmin * arcmin)
+        cos_lim_inner = np.cos(self.radius / 2 * arcmin)
         cos_dist = np.sum(vec * vec0.T, 1)
-        good = cos_dist > cos_lim
+        outer = cos_dist > cos_lim_outer
+        inner = cos_dist > cos_lim_inner
 
         t2 = time.time()
         print("Done in {:6.2f} s".format(t2 - t1))
-        return good
+        return outer, inner
 
     def linear_fit(
         self,

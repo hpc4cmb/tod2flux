@@ -94,7 +94,7 @@ def main():
         if comm.rank == 0:
             print(
                 "Found {} files for {} under {}".format(
-                len(detector_files), detector_name, args.input_path
+                    len(detector_files), detector_name, args.input_path
                 ),
                 flush=True,
             )
