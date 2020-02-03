@@ -12,7 +12,16 @@ class Dataset:
     and one target.
     """
 
-    def __init__(self, filename):
+    def __init__(self, filename, time_offset=None, time_scale=None):
+        """ Instantiate a Dataset object.  The time stamps should be in
+        UNIX time.  If the dataset time is in different units, it can
+        be modified with time_offset and time_scale.
+
+        Args:
+        filename(str) :  Full path to the small dataset FITS file
+        time_offset(float) : offset to subtract from the time stamps
+        time_scale(float) : scaling to apply to the time stamps
+        """
         self.filename = filename
         self.name = os.path.basename(filename)
 
@@ -42,6 +51,10 @@ class Dataset:
         self.fsample = hdulist[1].header["FSAMPLE"]
 
         self.time_s = hdulist[1].data.field("TIME").flatten()
+        if time_offset is not None:
+            self.time_s += time_offset
+        if time_scale is not None:
+            self.time_s *= time_scale
         self.theta = hdulist[1].data.field("THETA").flatten()
         self.phi = hdulist[1].data.field("PHI").flatten()
         self.psi = hdulist[1].data.field("PSI").flatten()

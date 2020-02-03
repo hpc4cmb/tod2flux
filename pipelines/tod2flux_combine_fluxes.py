@@ -63,9 +63,14 @@ def main():
     for target in targets:
         all_fits = database.targets[target]
         print("target =", target, ", fits =", len(all_fits))
-        color_corrections, color_correction_errors = fitter.fit(target, pol=True)
+        color_corrections, color_correction_errors = fitter.fit(
+            target, pol=True, fname="results_{}.csv".format(target)
+        )
         color_corrections2, color_correction_errors2 = fitter.fit(
-            target, color_corrections=color_corrections, pol=True
+            target,
+            color_corrections=color_corrections,
+            pol=True,
+            fname="ccorrected_results_{}.csv".format(target),
         )
         """
         for det in color_corrections:

@@ -1,9 +1,88 @@
+from datetime import datetime, timezone, timedelta
 import os
 import sys
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+
+
+def to_UTC(t):
+    # Convert UNIX time stamp to a date string
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def to_date(t):
+    # Convert UNIX time stamp to a date string
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%d")
+
+
+def to_JD(t):
+    # Unix time stamp to Julian date
+    # (days since -4712-01-01 12:00:00 UTC)
+    return t / 86400.0 + 2440587.5
+
+
+def to_MJD(t):
+    # Convert Unix time stamp to modified Julian date
+    # (days since 1858-11-17 00:00:00 UTC)
+    return to_JD(t) - 2400000.5
+
+
+def to_DJD(t):
+    # Convert Unix time stamp to Dublin Julian date
+    # (days since 1899-12-31 12:00:00)
+    # This is the time format used by PyEphem
+    return to_JD(t) - 2415020
+
+
+def DJDtoUNIX(djd):
+    # Convert Dublin Julian date to a UNIX time stamp
+    return ((djd + 2415020) - 2440587.5) * 86400.0
+
+
+class Scan:
+    """ Utility class for organizing flux fit data into scans
+    """
+
+    def __init__(self, start=1e30, stop=-1e-30):
+        self.start = start
+        self.stop = stop
+        self.fits = []
+
+    def __iadd__(self, other):
+        self.fits += other.fits
+        self.start = min(self.start, other.start)
+        self.stop = max(self.stop, other.stop)
+        return self
+
+    def mjd(self):
+        """ Return a string representation of the time span """
+        return "MJD {:.2f} - {:.2f}".format(to_MJD(self.start), to_MJD(self.stop))
+
+    def datetime(self):
+        """ Return a string representation of the time span """
+        return "{} - {}".format(to_UTC(self.start), to_UTC(self.stop))
+
+    def date(self):
+        """ Return a string representation of the time span """
+        return "{} -- {}".format(to_date(self.start), to_date(self.stop))
+
+    def append(self, fit):
+        if self.start > fit.start_time:
+            self.start = fit.start_time
+        if self.stop < fit.stop_time:
+            self.stop = fit.stop_time
+        self.fits.append(fit)
+
+    def __getitem__(self, key):
+        return self.fits[key]
+
+    def __setitem__(self, key, value):
+        self.fits[key] = value
+
+    def __contains__(self, key):
+        return key in self.fits
 
 
 class FluxFitter:
@@ -21,7 +100,9 @@ class FluxFitter:
         self.database = database
         self.scan_length = scan_length
 
-    def _sort_data(self, scans, mode, pol, pointing, data, error, color_corrections):
+    def _sort_data(
+        self, scans, mode, pol, pointing, data, error, freqscan, color_corrections
+    ):
         """ Sort fit data by frequency
         """
 
@@ -42,6 +123,7 @@ class FluxFitter:
                     pointing[freq] = []
                     data[freq] = []
                     error[freq] = []
+                    freqscan[freq] = Scan()
                 if pol:
                     pointing[freq].append(
                         [1, eta * np.cos(2 * psi), eta * np.sin(2 * psi)]
@@ -50,9 +132,12 @@ class FluxFitter:
                     pointing[freq].append([1])
                 data[freq].append(params.flux * cc)
                 error[freq].append(params.flux_err * cc)
+                freqscan[freq].append(fit)
         return
 
-    def _solve_data(self, pointing, data, error, noiseweight=False):
+    def _solve_data(
+        self, pointing, data, error, freqscan, results=None, noiseweight=False
+    ):
         """ Solve for polarized flux in each frequencye
 
         noiseweight=False because it will promote T->P leakage.
@@ -64,6 +149,7 @@ class FluxFitter:
         for freq in sorted(pointing):
             pointing[freq] = np.vstack(pointing[freq])
             data[freq] = np.array(data[freq])
+            scan = freqscan[freq]
             print(
                 "Solving for flux {} GHz using {} samples".format(freq, data[freq].size)
             )
@@ -84,16 +170,26 @@ class FluxFitter:
             flux[freq] = np.dot(cov, proj)
             flux_err[freq] = cov
             print("freq = {}".format(freq))
-            print("  data = {}".format(data[freq]))
-            print("  flux = {}".format(flux[freq]))
-            print("  mean(data) = {}".format(np.mean(data[freq])))
+            print("  time = {}".format(scan.datetime()))
+            print(
+                "  flux = {} +- {}".format(flux[freq], np.sqrt(np.diag(flux_err[freq])))
+            )
+            if results is not None:
+                scale = 1e3  # mJy
+                I, Q, U = flux[freq] * scale
+                Ierr, Qerr, Uerr = np.sqrt(np.diag(flux_err[freq])) * scale
+                results.write(
+                    "{:12}, {:>26}, {:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}\n".format(
+                        freq, scan.date(), I, Ierr, Q, Qerr, U, Uerr
+                    )
+                )
             x.append(freq)
             y.append(flux[freq])
             z.append(np.diag(flux_err[freq]) ** 0.5)
 
         return flux, flux_err, x, y, z
 
-    def _plot_flux(self, axes, pol, iscan, x, y, z):
+    def _plot_flux(self, axes, pol, iscan, x, y, z, scan):
 
         # Plot the results
 
@@ -112,7 +208,7 @@ class FluxFitter:
         # Intensity
         axes[0].set_title("Intensity")
         axes[0].errorbar(
-            freq, I, I_err, label="scan {}".format(iscan), fmt="o-",
+            freq, I, I_err, label="scan {} : {}".format(iscan, scan.date()), fmt="o-",
         )
         # axes[0].set_yscale("log")
         axes[0].set_ylabel("Flux [Jy]")
@@ -122,7 +218,11 @@ class FluxFitter:
             p = np.sqrt(Q ** 2 + U ** 2) / I
             p_err = 0
             axes[1].errorbar(
-                freq, p, p_err, label="scan {}".format(iscan), fmt="o-",
+                freq,
+                p,
+                p_err,
+                label="scan {} : {}".format(iscan, scan.date()),
+                fmt="o-",
             )
             axes[1].set_ylim([0, 0.2])
             # Polarization angle
@@ -136,7 +236,11 @@ class FluxFitter:
                     angle[i] += 180
             angle_err = 0
             axes[2].errorbar(
-                freq, angle, angle_err, label="scan {}".format(iscan), fmt="o-",
+                freq,
+                angle,
+                angle_err,
+                label="scan {} : {}".format(iscan, scan.date()),
+                fmt="o-",
             )
             axes[2].set_ylim([-20, 200])
             axes[2].axhline(0, linestyle="--", color="k", zorder=0)
@@ -151,55 +255,65 @@ class FluxFitter:
             ax.set_xlabel("Frequency [GHz]")
         return
 
-    def _analyze_residual(self, target, residuals, residual_errors, ccstring):
-        for single in True, False:
+    def _analyze_residual(self, target, residuals, residual_errors, ccstring, variable):
+        if variable:
+            single = True
+        else:
+            single = False
+
+        if single:
+            ssingle = "single"
+        else:
+            ssingle = "combined"
+        fig2 = plt.figure(figsize=[18, 12])
+        fig2.suptitle("{}, {}".format(target, ssingle))
+        ax = fig2.add_subplot(1, 1, 1)
+        color_corrections = {}
+        color_correction_errors = {}
+        ticks = []
+        ticklabels = []
+        for idet, det in enumerate(sorted(residuals.keys())):
+            n = len(residuals[det])
             if single:
-                ssingle = "single"
-            else:
-                ssingle = "combined"
-            fig2 = plt.figure(figsize=[18, 12])
-            fig2.suptitle("{}, {}".format(target, ssingle))
-            ax = fig2.add_subplot(1, 1, 1)
-            color_corrections = {}
-            color_correction_errors = {}
-            ticks = []
-            ticklabels = []
-            for idet, det in enumerate(sorted(residuals.keys())):
-                n = len(residuals[det])
-                if single:
-                    ind = slice(0, n // 2)  # Individual scans residuals
+                if variable:
+                    # Individual scans residuals (combined were never made)
+                    ind = slice(0, n)
                 else:
-                    ind = slice(n // 2, n)  # The combined scan residuals
-                resid = np.array(residuals[det])[ind]
-                resid_err = np.array(residual_errors[det])[ind]
-                # if not single and ccstring == "_ccorrected":
-                #    import pdb
-                #    pdb.set_trace()
-                color_corrections[det] = np.mean(resid)
-                n = resid.size
-                color_correction_errors[det] = np.sqrt(np.sum((resid_err / n) ** 2))
-                ax.errorbar(np.ones(n) * idet, resid, resid_err, fmt="b.", ms=3)
-                ax.errorbar(
-                    idet,
-                    color_corrections[det],
-                    color_correction_errors[det],
-                    fmt="ro",
-                    ms=4,
-                )
-                ticks.append(idet)
-                ticklabels.append(det)
-            plt.xticks(
-                ticks,
-                ticklabels,
-                rotation="vertical",
-                horizontalalignment="center",
-                verticalalignment="top",
+                    # Individual scans residuals
+                    ind = slice(0, n // 2)
+            else:
+                ind = slice(n // 2, n)  # The combined scan residuals
+            resid = np.array(residuals[det])[ind]
+            resid_err = np.array(residual_errors[det])[ind]
+            # if not single and ccstring == "_ccorrected":
+            #    import pdb
+            #    pdb.set_trace()
+            color_corrections[det] = np.mean(resid)
+            n = resid.size
+            color_correction_errors[det] = np.sqrt(np.sum((resid_err / n) ** 2))
+            ax.errorbar(np.ones(n) * idet, resid, resid_err, fmt="b.", ms=3)
+            ax.errorbar(
+                idet,
+                color_corrections[det],
+                color_correction_errors[det],
+                fmt="ro",
+                ms=4,
             )
-            ax.grid(True)
-            ax.set_ylim([0.8, 1.2])
-            fname = "color_correction_{}_{}{}.png".format(target, ssingle, ccstring)
-            plt.savefig(fname)
-            print("Color correction saved in {}".format(fname))
+            ticks.append(idet)
+            ticklabels.append(det)
+        plt.xticks(
+            ticks,
+            ticklabels,
+            rotation="vertical",
+            horizontalalignment="center",
+            verticalalignment="top",
+        )
+        ax.grid(True)
+        ax.set_ylim([0.8, 1.2])
+        fname = "color_correction_{}_{}{}.png".format(target, ssingle, ccstring)
+        plt.savefig(fname)
+        plt.close()
+        print("Color correction saved in {}".format(fname))
 
         return color_corrections, color_correction_errors
 
@@ -253,8 +367,6 @@ class FluxFitter:
                     residual_errors[det] = []
                 detflux = params.flux * cc
                 detflux_err = params.flux_err * cc
-                # print("  det = {}, flux = {}, estimate = {}, residual = {}".format(
-                #     det, detflux, estimate, detflux / estimate))
                 residuals[det].append(detflux / estimate)
                 residual_errors[det].append(
                     np.sqrt(
@@ -265,7 +377,33 @@ class FluxFitter:
 
         return
 
-    def fit(self, target, pol=True, color_corrections=None):
+    def _is_variable(self, all_flux, all_flux_err):
+        """ Examine the flux fits and determine if the source is variable or not.
+        """
+        if len(all_flux) == 0:
+            return False
+        freqs = set()
+        for flux in all_flux:
+            for freq in flux:
+                freqs.add(freq)
+        variable = False
+        for freq in freqs:
+            freqflux = []
+            freqflux_err = []
+            for flux, flux_err in zip(all_flux, all_flux_err):
+                if freq in flux:
+                    freqflux.append(flux[freq][0])
+                    freqflux_err.append(np.sqrt(flux_err[freq][0, 0]))
+            freqflux = np.array(freqflux)
+            freqflux_err = np.array(freqflux_err)
+            good = freqflux_err < 0.1 * freqflux
+            mean_flux = np.mean(freqflux[good])
+            variable = np.any(np.abs(freqflux[good] - mean_flux) > 0.1 * mean_flux)
+            if variable:
+                break
+        return variable
+
+    def fit(self, target, pol=True, color_corrections=None, fname="results.csv"):
         if color_corrections is None:
             ccstring = ""
         else:
@@ -277,36 +415,66 @@ class FluxFitter:
         mode = "NLFit6"
         # mode = "LinFit4"
         fig = plt.figure(figsize=[18, 12])
-        fig.suptitle("{} - {}".format(target, mode))
         axes = []
         for i in range(3):
             axes.append(fig.add_subplot(2, 2, 1 + i))
 
+        results = open(fname, "w")
+        results.write("# Target = {}\n".format(target))
+        results.write(
+            "# {:>10}, {:>26}, {:>12}, {:>13}, {:>12}, {:>13}, {:>12}, {:>13}\n".format(
+                "freq [GHz]",
+                "time",
+                "I flux [mJy]",
+                "I error [mJy]",
+                "Q flux [mJy]",
+                "Q error [mJy]",
+                "U flux [mJy]",
+                "U error [mJy]",
+            )
+        )
         residuals = {}
         residual_errors = {}
 
         all_pointing = {}
         all_data = {}
         all_error = {}
+        all_freqscan = {}
+
+        all_flux = []
+        all_flux_err = []
+        all_scan = Scan()
 
         for iscan, scan in enumerate(scans):
-            print("\nISCAN = {}\n".format(iscan))
+            all_scan += scan
+            print("\nISCAN = {}, {}\n".format(iscan, scan.datetime()))
             pointing = {}
             data = {}
             error = {}
+            freqscan = {}
 
-            self._sort_data([scan], mode, pol, pointing, data, error, color_corrections)
+            self._sort_data(
+                [scan], mode, pol, pointing, data, error, freqscan, color_corrections
+            )
 
             for freq in pointing:
                 if freq not in all_pointing:
                     all_pointing[freq] = []
                     all_data[freq] = []
                     all_error[freq] = []
+                    all_freqscan[freq] = Scan()
                 all_pointing[freq] += pointing[freq]
                 all_data[freq] += data[freq]
                 all_error[freq] += error[freq]
+                all_freqscan[freq] += freqscan[freq]
 
-            flux, flux_err, x, y, z = self._solve_data(pointing, data, error)
+            flux, flux_err, x, y, z = self._solve_data(
+                pointing, data, error, freqscan, results
+            )
+            if len(flux) == 0:
+                continue
+            all_flux.append(flux)
+            all_flux_err.append(flux_err)
             self._measure_residual(
                 [scan],
                 mode,
@@ -317,29 +485,41 @@ class FluxFitter:
                 residual_errors,
                 color_corrections,
             )
-            self._plot_flux(axes, pol, iscan + 1, x, y, z)
+            self._plot_flux(axes, pol, iscan + 1, x, y, z, scan)
 
-        flux, flux_err, x, y, z = self._solve_data(all_pointing, all_data, all_error)
-        self._measure_residual(
-            scans,
-            mode,
-            pol,
-            flux,
-            flux_err,
-            residuals,
-            residual_errors,
-            color_corrections,
+        variable = self._is_variable(all_flux, all_flux_err)
+
+        if not variable:
+
+            flux, flux_err, x, y, z = self._solve_data(
+                all_pointing, all_data, all_error, all_freqscan, results
+            )
+            self._measure_residual(
+                scans,
+                mode,
+                pol,
+                flux,
+                flux_err,
+                residuals,
+                residual_errors,
+                color_corrections,
+            )
+            self._plot_flux(axes, pol, "Combined", x, y, z, all_scan)
+
+        fig.suptitle(
+            "{} - {}, variable = {}, {}".format(target, mode, variable, all_scan.date())
         )
-        self._plot_flux(axes, pol, "Combined", x, y, z)
-
-        plt.legend(loc="best")
+        plt.legend(loc="upper left", bbox_to_anchor=[1, 1])
         fname = "flux_fit_{}{}.png".format(target, ccstring)
         plt.savefig(fname)
+        plt.close()
         print("Fit saved in {}".format(fname), flush=True)
 
         new_color_corrections, new_color_correction_errors = self._analyze_residual(
-            target, residuals, residual_errors, ccstring,
+            target, residuals, residual_errors, ccstring, variable
         )
+
+        results.close()
 
         return new_color_corrections, new_color_correction_errors
 
@@ -366,12 +546,11 @@ class FluxFitter:
 
         # Now organize the fits into scans
         scans = []
-        scan_start = -1e30
+        scan = Scan()
         for start, fit in zip(starts, fits):
-            if start - scan_start > self.scan_length * 86400:
+            if start - scan.start > self.scan_length * 86400:
                 # Start a new scan
-                scan = []
+                scan = Scan()
                 scans.append(scan)
-                scan_start = start
             scan.append(fit)
         return scans

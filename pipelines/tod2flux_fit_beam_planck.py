@@ -5,6 +5,7 @@ measure the apparent flux density through one detector.
 """
 
 import argparse
+from datetime import datetime
 import os
 import sys
 import time
@@ -130,7 +131,10 @@ def main():
             # Load the dataset
 
             print("Loading", filename)
-            dataset = tod2flux.Dataset(filename)
+            # Planck time stamps count from 1958-01-01 00:00:00
+            dataset = tod2flux.Dataset(
+                filename, time_offset=datetime(1958, 1, 1).timestamp()
+            )
             print(dataset)
 
             # Fit the detector over the data
