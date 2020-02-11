@@ -2,6 +2,7 @@ from datetime import datetime, timezone, timedelta
 import os
 import sys
 
+import healpy as hp
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -96,9 +97,29 @@ class FluxFitter:
 
     """
 
-    def __init__(self, database, scan_length=30):
+    def __init__(self, database, scan_length=30, coord="C"):
         self.database = database
         self.scan_length = scan_length
+        self.coord = coord
+
+    def _rotate_pol(self, theta_in, phi_in, psi_in, coord_in):
+        """ Rotate psi from coord_in to self.coord at (theta_in, phi_in)
+        """
+        dtheta = 1e-6
+
+        vec1_in = hp.dir2vec(theta_in, phi_in)
+        vec2_in = hp.dir2vec(theta_in - dtheta, phi_in)
+
+        rotmatrix = hp.rotator.get_coordconv_matrix([coord_in, self.coord])[0]
+
+        vec1_out = np.dot(rotmatrix, vec1_in)
+        vec2_out = np.dot(rotmatrix, vec2_in)
+
+        theta_out, phi_out = hp.vec2dir(vec1_out)
+        vec3 = hp.dir2vec(theta_out - dtheta, phi_out)
+        ang = np.arccos(np.dot(vec2_out - vec1_out, vec3 - vec1_out) / dtheta ** 2)
+
+        return psi_in + ang
 
     def _sort_data(
         self, scans, mode, pol, pointing, data, error, freqscan, color_corrections
@@ -116,7 +137,10 @@ class FluxFitter:
                 else:
                     cc = 1
                 freq = fit.frequency
-                psi = fit.psi_pol
+                if fit.coord.upper() != self.coord.upper():
+                    psi = self._rotate_pol(fit.theta, fit.phi, fit.psi_pol, fit.coord)
+                else:
+                    psi = fit.psi_pol
                 eta = fit.pol_efficiency
                 params = fit.entries[mode]
                 if freq not in pointing:
@@ -138,7 +162,7 @@ class FluxFitter:
     def _solve_data(
         self, pointing, data, error, freqscan, results=None, noiseweight=False
     ):
-        """ Solve for polarized flux in each frequencye
+        """ Solve for polarized flux in each frequency
 
         noiseweight=False because it will promote T->P leakage.
         """
@@ -345,7 +369,10 @@ class FluxFitter:
                     cc = 1
                 freqflux = flux[freq]
                 freqflux_err = np.sqrt(np.diag(flux_err[freq]))
-                psi = fit.psi_pol
+                if fit.coord.upper() != self.coord.upper():
+                    psi = self._rotate_pol(fit.theta, fit.phi, fit.psi_pol, fit.coord)
+                else:
+                    psi = fit.psi_pol
                 eta = fit.pol_efficiency
                 params = fit.entries[mode]
                 if pol:
@@ -507,7 +534,9 @@ class FluxFitter:
             self._plot_flux(axes, pol, "Combined", x, y, z, all_scan)
 
         fig.suptitle(
-            "{} - {}, variable = {}, {}".format(target, mode, variable, all_scan.date())
+            "{} - {}, variable = {}, {}, coord = {}".format(
+                target, mode, variable, all_scan.date(), self.coord
+            )
         )
         plt.legend(loc="upper left", bbox_to_anchor=[1, 1])
         fname = "flux_fit_{}{}.png".format(target, ccstring)

@@ -44,6 +44,14 @@ class Dataset:
         self.target_lat_deg = hdulist[1].header["LAT"]
         self.target_phi = self.target_lon_deg * degree
         self.target_theta = (90 - self.target_lat_deg) * degree
+        try:
+            self.coord = hdulist[1].header["COORD"]
+        except Exception as e:
+            print(
+                "WARNING: could not read coordinate system from '{}': '{}'. "
+                "Defaulting to GALACTIC".format(filename, e)
+            )
+            self.coord = "G"
         if "SIGMA" in hdulist[1].columns.names:
             self.sigma_mKCMB = hdulist[1].header["SIGMA"] * 1e3
         else:

@@ -155,10 +155,23 @@ class Fit:
     """
 
     def __init__(
-        self, dataset, target, detector, times, psi_pol_rad, pol_efficiency, frequency
+        self,
+        dataset,
+        target,
+        theta,
+        phi,
+        coord,
+        detector,
+        times,
+        psi_pol_rad,
+        pol_efficiency,
+        frequency,
     ):
         self.dataset = dataset
         self.target = target
+        self.theta = theta
+        self.phi = phi
+        self.coord = coord
         self.detector = detector
         self.start_time = times[0]
         self.stop_time = times[-1]

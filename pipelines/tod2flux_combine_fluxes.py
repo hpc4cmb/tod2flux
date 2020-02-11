@@ -26,6 +26,9 @@ def parse_arguments():
         "--target", required=False, help="Specific target to fit",
     )
     parser.add_argument(
+        "--coord", default="C", help="Reference coordinate system [G,E,C]",
+    )
+    parser.add_argument(
         "--scan-length-days",
         default=30,
         type=np.float,
@@ -47,7 +50,9 @@ def main():
 
     # Initialize the fitter
 
-    fitter = tod2flux.FluxFitter(database, args.scan_length_days)
+    fitter = tod2flux.FluxFitter(
+        database, scan_length=args.scan_length_days, coord=args.coord
+    )
 
     # Process the database
 

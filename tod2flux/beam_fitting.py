@@ -109,6 +109,9 @@ class DetectorFitter:
         fit = Fit(
             dataset.name,
             dataset.target,
+            dataset.target_theta,
+            dataset.target_phi,
+            dataset.coord,
             self.detector.name,
             times,
             psi_pol,
@@ -125,8 +128,15 @@ class DetectorFitter:
             nrow=3,
             ncol=3,
             title="Full signal",
-            suptitle="{} -- {} -- scan # {}, info = {}".format(
-                dataset.target, self.detector.name, iscan, dataset.info
+            suptitle="{} -- {} -- scan # {}, info = {}, coord = {:.4f} {:.4f} ({})"
+            "".format(
+                dataset.target,
+                self.detector.name,
+                iscan,
+                dataset.info,
+                dataset.target_lon_deg,
+                dataset.target_lat_deg,
+                dataset.coord,
             ),
         )
 
@@ -210,6 +220,8 @@ class DetectorFitter:
 
         def decorate(ax):
             ax.set_aspect("equal")
+            ax.set_xlim([self.bin_lim[0], self.bin_lim[-1]])
+            ax.set_ylim([self.bin_lim[0], self.bin_lim[-1]])
             cb = plt.colorbar(pc, orientation="horizontal", aspect=30, pad=0.2)
             cb.set_label("mK")
             ax.set_xlabel("Cross-scan [arc min]")
@@ -220,6 +232,10 @@ class DetectorFitter:
             pc = ax.pcolor(
                 self.X_lim, self.Y_lim, sigmap, vmin=-amp, vmax=amp, cmap="coolwarm",
             )
+            # mask = np.logical_and(
+            #    np.logical_and(phi > np.amin(self.X_lim), phi < np.amax(self.X_lim)),
+            #    np.logical_and(theta > np.amin(self.Y_lim), theta < np.amax(self.Y_lim))
+            # )
             ax.scatter(phi, theta, s=1, color="k")
             ax.set_title("hits")
             decorate(ax)
