@@ -19,6 +19,7 @@ except ModuleNotFoundError:
 
 from .classes import FitEntry, Fit
 from .kernels import fast_bin_map
+from .utilities import to_UTC, to_date, to_JD, to_MJD, to_DJD, DJDtoUNIX
 
 
 XAXIS, YAXIS, ZAXIS = np.eye(3)
@@ -128,7 +129,7 @@ class DetectorFitter:
             nrow=3,
             ncol=3,
             title="Full signal",
-            suptitle="{} -- {} -- scan # {}, info = {}, coord = {:.4f} {:.4f} ({})"
+            suptitle="{} -- {} -- scan # {}, info = {}, coord = {:.4f} {:.4f} ({}), {} - {}"
             "".format(
                 dataset.target,
                 self.detector.name,
@@ -137,6 +138,8 @@ class DetectorFitter:
                 dataset.target_lon_deg,
                 dataset.target_lat_deg,
                 dataset.coord,
+                to_date(times[0]),
+                to_date(times[-1]),
             ),
         )
 

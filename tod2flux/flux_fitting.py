@@ -1,4 +1,3 @@
-from datetime import datetime, timezone, timedelta
 import os
 import sys
 
@@ -7,46 +6,14 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
-
-def to_UTC(t):
-    # Convert UNIX time stamp to a date string
-    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def to_date(t):
-    # Convert UNIX time stamp to a date string
-    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%d")
-
-
-def to_JD(t):
-    # Unix time stamp to Julian date
-    # (days since -4712-01-01 12:00:00 UTC)
-    return t / 86400.0 + 2440587.5
-
-
-def to_MJD(t):
-    # Convert Unix time stamp to modified Julian date
-    # (days since 1858-11-17 00:00:00 UTC)
-    return to_JD(t) - 2400000.5
-
-
-def to_DJD(t):
-    # Convert Unix time stamp to Dublin Julian date
-    # (days since 1899-12-31 12:00:00)
-    # This is the time format used by PyEphem
-    return to_JD(t) - 2415020
-
-
-def DJDtoUNIX(djd):
-    # Convert Dublin Julian date to a UNIX time stamp
-    return ((djd + 2415020) - 2440587.5) * 86400.0
+from .utilities import to_UTC, to_date, to_JD, to_MJD, to_DJD, DJDtoUNIX
 
 
 class Scan:
     """ Utility class for organizing flux fit data into scans
     """
 
-    def __init__(self, start=1e30, stop=-1e-30):
+    def __init__(self, start=1e30, stop=-1e30):
         self.start = start
         self.stop = stop
         self.fits = []
@@ -97,29 +64,39 @@ class FluxFitter:
 
     """
 
-    def __init__(self, database, scan_length=30, coord="C"):
+    def __init__(self, database, scan_length=30, coord="C", IAU_pol=True):
         self.database = database
         self.scan_length = scan_length
         self.coord = coord
+        self.freqs = set()
+        self.IAU_pol = IAU_pol
 
     def _rotate_pol(self, theta_in, phi_in, psi_in, coord_in):
-        """ Rotate psi from coord_in to self.coord at (theta_in, phi_in)
+        """ Rotate psi from coord_in to self.coord at (theta_in, phi_in) and
+        correct the polarization convention.
         """
-        dtheta = 1e-6
+        if coord_in.upper() != self.coord.upper():
+            dtheta = 1e-6
 
-        vec1_in = hp.dir2vec(theta_in, phi_in)
-        vec2_in = hp.dir2vec(theta_in - dtheta, phi_in)
+            vec1_in = hp.dir2vec(theta_in, phi_in)
+            vec2_in = hp.dir2vec(theta_in - dtheta, phi_in)
 
-        rotmatrix = hp.rotator.get_coordconv_matrix([coord_in, self.coord])[0]
+            rotmatrix = hp.rotator.get_coordconv_matrix([coord_in, self.coord])[0]
 
-        vec1_out = np.dot(rotmatrix, vec1_in)
-        vec2_out = np.dot(rotmatrix, vec2_in)
+            vec1_out = np.dot(rotmatrix, vec1_in)
+            vec2_out = np.dot(rotmatrix, vec2_in)
 
-        theta_out, phi_out = hp.vec2dir(vec1_out)
-        vec3 = hp.dir2vec(theta_out - dtheta, phi_out)
-        ang = np.arccos(np.dot(vec2_out - vec1_out, vec3 - vec1_out) / dtheta ** 2)
+            theta_out, phi_out = hp.vec2dir(vec1_out)
+            vec3 = hp.dir2vec(theta_out - dtheta, phi_out)
+            ang = np.arccos(np.dot(vec2_out - vec1_out, vec3 - vec1_out) / dtheta ** 2)
+            psi_out = psi_in + ang
+        else:
+            psi_out = psi_in
 
-        return psi_in + ang
+        if self.IAU_pol:
+            psi_out *= -1
+
+        return psi_out
 
     def _sort_data(
         self, scans, mode, pol, pointing, data, error, freqscan, color_corrections
@@ -137,10 +114,7 @@ class FluxFitter:
                 else:
                     cc = 1
                 freq = fit.frequency
-                if fit.coord.upper() != self.coord.upper():
-                    psi = self._rotate_pol(fit.theta, fit.phi, fit.psi_pol, fit.coord)
-                else:
-                    psi = fit.psi_pol
+                psi = self._rotate_pol(fit.theta, fit.phi, fit.psi_pol, fit.coord)
                 eta = fit.pol_efficiency
                 params = fit.entries[mode]
                 if freq not in pointing:
@@ -187,12 +161,18 @@ class FluxFitter:
                 pnt2 = pointing[freq].T.copy() / np.median(error[freq]) ** 2
             invcov = np.dot(pnt2, pointing[freq])
             rcond = 1 / np.linalg.cond(invcov)
-            if rcond < 1e-3:
-                continue
-            cov = np.linalg.inv(invcov)
-            proj = np.dot(pnt2, data[freq])
-            flux[freq] = np.dot(cov, proj)
-            flux_err[freq] = cov
+            if rcond > 1e-3:
+                # Full polarized solution
+                cov = np.linalg.inv(invcov)
+                proj = np.dot(pnt2, data[freq])
+                flux[freq] = np.dot(cov, proj)
+                flux_err[freq] = cov
+            else:
+                # Intensity only solution
+                cov = 1 / invcov[0, 0]
+                proj = np.dot(pnt2[0], data[freq])
+                flux[freq] = np.array([cov * proj, 0, 0])
+                flux_err[freq] = np.diag(np.array([cov, 0, 0]))
             print("freq = {}".format(freq))
             print("  time = {}".format(scan.datetime()))
             print(
@@ -218,6 +198,8 @@ class FluxFitter:
         # Plot the results
 
         freq = np.array(x)
+        for f in freq:
+            self.freqs.add(f)
         try:
             if pol:
                 I, Q, U = np.vstack(y).T.copy()
@@ -237,6 +219,14 @@ class FluxFitter:
         # axes[0].set_yscale("log")
         axes[0].set_ylabel("Flux [Jy]")
         if pol:
+            good = np.logical_or(Q != 0, U != 0)
+            freq = freq[good]
+            I = I[good]
+            Q = Q[good]
+            U = U[good]
+            I_err = I_err[good]
+            Q_err = Q_err[good]
+            U_err = U_err[good]
             # Polarization fraction
             axes[1].set_title("Polarization fraction")
             p = np.sqrt(Q ** 2 + U ** 2) / I
@@ -250,7 +240,7 @@ class FluxFitter:
             )
             axes[1].set_ylim([0, 0.2])
             # Polarization angle
-            axes[2].set_title("Polarization angle")
+            axes[2].set_title("Polarization angle, IAU = {}".format(self.IAU_pol))
             angle = np.degrees(0.5 * np.arctan2(U, Q)) % 180
             med_angle = np.median(angle)
             for i, ang in enumerate(angle):
@@ -266,12 +256,14 @@ class FluxFitter:
                 label="scan {} : {}".format(iscan, scan.date()),
                 fmt="o-",
             )
-            axes[2].set_ylim([-20, 200])
-            axes[2].axhline(0, linestyle="--", color="k", zorder=0)
-            axes[2].axhline(180, linestyle="--", color="k", zorder=0)
+            axes[2].set_ylim([-30, 210])
+            for ang in 0, 180:
+                axes[2].axhline(ang, linestyle="--", color="k", zorder=0)
+            axes[2].set_yticks(np.arange(7) * 30)
         for ax in axes:
+            ax.grid(True)
             ax.set_xscale("log")
-            ax.set_xticks(freq)
+            ax.set_xticks(sorted(self.freqs))
             ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
             ax.tick_params(
                 axis="x", which="minor", bottom=False, top=False, labelbottom=False,
@@ -575,9 +567,9 @@ class FluxFitter:
 
         # Now organize the fits into scans
         scans = []
-        scan = Scan()
+        scan = None
         for start, fit in zip(starts, fits):
-            if start - scan.start > self.scan_length * 86400:
+            if scan is None or start - scan.start > self.scan_length * 86400:
                 # Start a new scan
                 scan = Scan()
                 scans.append(scan)
