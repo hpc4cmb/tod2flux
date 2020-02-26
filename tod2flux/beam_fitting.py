@@ -144,37 +144,65 @@ class DetectorFitter:
         )
 
         self.linear_fit(
+            times,
             scan_phi_arcmin,
             scan_theta_arcmin,
             signal_mK,
             fit,
             fit_offset=False,
             fit_gradient=False,
+            derivative_order=0,
         )
         self.linear_fit(
+            times,
             scan_phi_arcmin,
             scan_theta_arcmin,
             signal_mK,
             fit,
             fit_offset=False,
             fit_gradient=True,
+            derivative_order=0,
         )
+        # self.linear_fit(
+        #    times,
+        #    scan_phi_arcmin,
+        #    scan_theta_arcmin,
+        #    signal_mK,
+        #    fit,
+        #    fit_offset=False,
+        #    fit_gradient=True,
+        #    derivative_order=1,
+        # )
         self.linear_fit(
+            times,
             scan_phi_arcmin,
             scan_theta_arcmin,
             signal_mK,
             fit,
             fit_offset=True,
             fit_gradient=True,
+            derivative_order=0,
         )
         self.nonlinear_fit(
+            times,
             scan_phi_arcmin,
             scan_theta_arcmin,
             signal_mK,
             fit,
             fit_offset=True,
             fit_gradient=True,
+            derivative_order=0,
         )
+        # self.nonlinear_fit(
+        #    times,
+        #    scan_phi_arcmin,
+        #    scan_theta_arcmin,
+        #    signal_mK,
+        #    fit,
+        #    fit_offset=True,
+        #    fit_gradient=True,
+        #    derivative_order=1,
+        # )
 
         self.fig.subplots_adjust(hspace=0.4)
         fname_plot = "plot_{}_{}_{}.png".format(
@@ -403,12 +431,14 @@ class DetectorFitter:
 
     def linear_fit(
         self,
+        times,  # UNIX time
         phi,  # arc min
         theta,  # arc min
         signal,  # mK
         fit,
         fit_offset=False,
         fit_gradient=False,
+        derivative_order=0,
     ):
         """ Assume an fixed beam and perform a GLS fit of the templates
 
@@ -436,6 +466,15 @@ class DetectorFitter:
         templates.append(np.ones(len(signal)))
         template_names.append("offset")
         template_units.append("mK")
+
+        if derivative_order > 0:
+            # Derivatives are fitted at the sample closest to the center
+            i0 = np.argmin(phi ** 2 + theta ** 2)
+            t0 = times[i0]
+            for order in range(1, derivative_order + 1):
+                templates.append(beam * ((times - t0) / 86400) ** order)
+                template_names.append("derivative{}".format(order))
+                template_units.append("mK/day^{}".format(order))
 
         if fit_offset:
             delta = 1e-3  # in arc min
@@ -522,47 +561,61 @@ class DetectorFitter:
 
     def nonlinear_fit(
         self,
+        times,  # UNIX time
         phi,  # arc min
         theta,  # arc min
         signal,  # mK
         fit,
         fit_offset=False,
         fit_gradient=False,
+        derivative_order=0,
     ):
         """ A nonlinear fit allows for arbitrary beam offsets and can support generic
         Gaussian fits.
 
         """
         print(
-            "\nPerforming nonlinear fit. fit_offset = {}, fit_gradient = {}".format(
-                fit_offset, fit_gradient
+            "\nPerforming nonlinear fit. fit_offset = {}, fit_gradient = {}, derivative_order = {}".format(
+                fit_offset, fit_gradient, derivative_order
             ),
             flush=True,
         )
         t1 = time.time()
 
+        # Derivatives are fitted at the sample closest to the center
+        i0 = np.argmin(phi ** 2 + theta ** 2)
+        t0 = times[i0]
+
         sigma = self.detector.sigma_KCMB * 1e3
 
-        def get_resid(param, phi, theta, signal):
+        def get_resid(param, times, phi, theta, signal):
             amp = param[0]
             offset = param[1]
             i = 2
+            if derivative_order > 0:
+                deriv = param[i : i + derivative_order]
+                dtime = (times - t0) / 86400
+                amp = np.zeros(times.size) + amp
+                for order in range(1, derivative_order + 1):
+                    amp += deriv[order - 1] * dtime ** order
+                    i += 1
             if fit_offset:
                 phi_offset, theta_offset = param[i : i + 2]
+                phi = phi + phi_offset
+                theta = theta + theta_offset
                 i += 2
-            else:
-                phi_offset, theta_offset = 0, 0
             if fit_gradient:
                 phi_grad, theta_grad = param[i : i + 2]
+                phi_grad = phi * phi_grad * 1e-3
+                theta_grad = theta * theta_grad * 1e-3
                 i += 2
             else:
                 phi_grad, theta_grad = 0, 0
             model = (
-                amp
-                * self.detector.beam.get_beam(phi + phi_offset, theta + theta_offset)
+                amp * self.detector.beam.get_beam(phi, theta)
                 + offset
-                + phi * phi_grad * 1e-3
-                + theta * theta_grad * 1e-3
+                + phi_grad
+                + theta_grad
             )
             return signal - model
 
@@ -578,6 +631,12 @@ class DetectorFitter:
         offset0 = np.median(signal)
         amp0 = np.amax(signal) - offset0
         x0 = [amp0, offset0]
+
+        if derivative_order > 0:
+            for order in range(1, derivative_order + 1):
+                param_names.append("derivative{}".format(order))
+                units.append("mK/day^{}".format(order))
+                x0 += [0]
 
         if fit_offset:
             param_names.append("phi offset")
@@ -599,7 +658,7 @@ class DetectorFitter:
             get_resid,
             x0,
             method="lm",
-            args=(phi, theta, signal),
+            args=(times, phi, theta, signal),
             max_nfev=100,
             ftol=1e-8,
             xtol=1e-8,
