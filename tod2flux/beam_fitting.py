@@ -83,12 +83,15 @@ class DetectorFitter:
         theta = dataset.theta[ind]
         phi = dataset.phi[ind]
 
-        outer, inner = self.crop_data(target_theta, target_phi, theta, phi)
-        times = times[outer]
+        outer, inner, quadrants = self.crop_data(target_theta, target_phi, theta, phi)
         print("\nOUTER = {}, INNER = {}\n".format(np.sum(outer), np.sum(inner)))
         if np.sum(inner) < 10:
             print("Empty scan, no processing done", flush=True)
             return None
+        if np.any(quadrants < 10):
+            print("Incomplete scan, no processing done", flush=True)
+            return None
+        times = times[outer]
         theta = theta[outer].copy()
         phi = phi[outer].copy()
 
@@ -114,6 +117,7 @@ class DetectorFitter:
             dataset.target_phi,
             dataset.coord,
             self.detector.name,
+            self.detector.detector_set,
             times,
             psi_pol,
             pol_eff,
@@ -424,10 +428,19 @@ class DetectorFitter:
         cos_dist = np.sum(vec * vec0.T, 1)
         outer = cos_dist > cos_lim_outer
         inner = cos_dist > cos_lim_inner
+        # Count samples in each quadrant
+        quadrants = np.array(
+            [
+                np.sum(inner * (target_phi > phi) * (target_theta > theta)),
+                np.sum(inner * (target_phi > phi) * (target_theta < theta)),
+                np.sum(inner * (target_phi < phi) * (target_theta > theta)),
+                np.sum(inner * (target_phi < phi) * (target_theta < theta)),
+            ]
+        )
 
         t2 = time.time()
         print("Done in {:6.2f} s".format(t2 - t1))
-        return outer, inner
+        return outer, inner, quadrants
 
     def linear_fit(
         self,
@@ -676,7 +689,7 @@ class DetectorFitter:
 
         jacobian = result.jac
         invcov = np.dot(jacobian.T, jacobian)
-        cov = np.linalg.inv(invcov)
+        cov = np.linalg.inv(invcov) * np.var(resid)
         errors = np.diag(cov)
 
         params = OrderedDict()

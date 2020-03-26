@@ -75,6 +75,10 @@ class Detector:
     def nominal_frequency(self):
         raise RuntimeError("Fell through to virtual method for nominal_frequency")
 
+    @property
+    def detector_set(self):
+        raise RuntimeError("Fell through to virtual method for detector_set")
+
 
 class Bandpass:
     """ Virtual class that defines the bandpass interface
@@ -162,6 +166,7 @@ class Fit:
         phi,
         coord,
         detector,
+        detector_set,
         times,
         psi_pol_rad,
         pol_efficiency,
@@ -173,6 +178,7 @@ class Fit:
         self.phi = phi
         self.coord = coord
         self.detector = detector
+        self.detector_set = detector_set
         self.start_time = times[0]
         self.stop_time = times[-1]
         self.psi_pol = psi_pol_rad

@@ -61,15 +61,19 @@ class FluxFitter:
         database(Database) : An initialized Database object
         scan_length(float) : Maximum length of a single scan across
             the target in days
+        coord(str) : Either C, E or G
+        IAU_pol(bool) : Use IAU polarization convention instead of Healpix convention
+        detsets(bool) : Split the fits into detector sets rather than by frequency
 
     """
 
-    def __init__(self, database, scan_length=30, coord="C", IAU_pol=True):
+    def __init__(self, database, scan_length=30, coord="C", IAU_pol=True, detsets=True):
         self.database = database
         self.scan_length = scan_length
         self.coord = coord
         self.freqs = set()
         self.IAU_pol = IAU_pol
+        self.detsets = detsets
 
     def _rotate_pol(self, theta_in, phi_in, psi_in, coord_in):
         """ Rotate psi from coord_in to self.coord at (theta_in, phi_in) and
@@ -99,7 +103,16 @@ class FluxFitter:
         return psi_out
 
     def _sort_data(
-        self, scans, mode, pol, pointing, data, error, freqscan, color_corrections
+        self,
+        scans,
+        mode,
+        pol,
+        frequency,
+        pointing,
+        data,
+        error,
+        freqscan,
+        color_corrections,
     ):
         """ Sort fit data by frequency
         """
@@ -114,27 +127,41 @@ class FluxFitter:
                 else:
                     cc = 1
                 freq = fit.frequency
+                detset = fit.detector_set
+                if self.detsets:
+                    key = detset
+                else:
+                    key = freq
                 psi = self._rotate_pol(fit.theta, fit.phi, fit.psi_pol, fit.coord)
                 eta = fit.pol_efficiency
                 params = fit.entries[mode]
-                if freq not in pointing:
-                    pointing[freq] = []
-                    data[freq] = []
-                    error[freq] = []
-                    freqscan[freq] = Scan()
+                if key not in pointing:
+                    frequency[key] = []
+                    pointing[key] = []
+                    data[key] = []
+                    error[key] = []
+                    freqscan[key] = Scan()
+                frequency[key].append(freq)
                 if pol:
-                    pointing[freq].append(
+                    pointing[key].append(
                         [1, eta * np.cos(2 * psi), eta * np.sin(2 * psi)]
                     )
                 else:
-                    pointing[freq].append([1])
-                data[freq].append(params.flux * cc)
-                error[freq].append(params.flux_err * cc)
-                freqscan[freq].append(fit)
+                    pointing[key].append([1])
+                data[key].append(params.flux * cc)
+                error[key].append(params.flux_err * cc)
+                freqscan[key].append(fit)
         return
 
     def _solve_data(
-        self, pointing, data, error, freqscan, results=None, noiseweight=False
+        self,
+        frequency,
+        pointing,
+        data,
+        error,
+        freqscan,
+        results=None,
+        noiseweight=False,
     ):
         """ Solve for polarized flux in each frequency
 
@@ -144,60 +171,150 @@ class FluxFitter:
         flux = {}
         flux_err = {}
         x, y, z = [], [], []
-        for freq in sorted(pointing):
-            pointing[freq] = np.vstack(pointing[freq])
-            data[freq] = np.array(data[freq])
-            scan = freqscan[freq]
+        for key in sorted(pointing):
+            freq = np.mean(frequency[key])
+            pointing[key] = np.vstack(pointing[key])
+            data[key] = np.array(data[key])
+            scan = freqscan[key]
             print(
-                "Solving for flux {} GHz using {} samples".format(freq, data[freq].size)
+                "Solving for flux with {} at {} GHz using {} samples".format(
+                    key, freq, data[key].size
+                )
             )
-            error[freq] = np.array(error[freq])
+            error[key] = np.array(error[key])
             pnt2 = []
             if noiseweight:
-                for pnt, err in zip(pointing[freq], error[freq]):
+                for pnt, err in zip(pointing[key], error[key]):
                     pnt2.append(pnt / err ** 2)
                     pnt2 = np.vstack(pnt2).T.copy()
             else:
-                pnt2 = pointing[freq].T.copy() / np.median(error[freq]) ** 2
-            invcov = np.dot(pnt2, pointing[freq])
+                pnt2 = pointing[key].T.copy() / np.median(error[key]) ** 2
+            invcov = np.dot(pnt2, pointing[key])
             rcond = 1 / np.linalg.cond(invcov)
             if rcond > 1e-3:
                 # Full polarized solution
                 cov = np.linalg.inv(invcov)
-                proj = np.dot(pnt2, data[freq])
-                flux[freq] = np.dot(cov, proj)
-                flux_err[freq] = cov
+                proj = np.dot(pnt2, data[key])
+                flux[key] = np.dot(cov, proj)
+                flux_err[key] = cov
             else:
                 # Intensity only solution
                 cov = 1 / invcov[0, 0]
-                proj = np.dot(pnt2[0], data[freq])
-                flux[freq] = np.array([cov * proj, 0, 0])
-                flux_err[freq] = np.diag(np.array([cov, 0, 0]))
-            print("freq = {}".format(freq))
+                proj = np.dot(pnt2[0], data[key])
+                flux[key] = np.array([cov * proj, 0, 0])
+                flux_err[key] = np.diag(np.array([cov, 0, 0]))
+            print("{} {}GHz".format(key, freq))
             print("  time = {}".format(scan.datetime()))
             print(
-                "  flux = {} +- {}".format(flux[freq], np.sqrt(np.diag(flux_err[freq])))
+                "  flux = {} +- {}".format(flux[key], np.sqrt(np.diag(flux_err[key])))
             )
             if results is not None:
                 scale = 1e3  # mJy
-                I, Q, U = flux[freq] * scale
-                Ierr, Qerr, Uerr = np.sqrt(np.diag(flux_err[freq])) * scale
+                I, Q, U = flux[key] * scale
+                I_err, Q_err, U_err = np.sqrt(np.diag(flux_err[key])) * scale
+                p, p_low, p_high, angle, angle_err = self._derive_pol(
+                    I, I_err, Q, Q_err, U, U_err
+                )
                 results.write(
-                    "{:12}, {:>26}, {:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}\n".format(
-                        freq, scan.date(), I, Ierr, Q, Qerr, U, Uerr
+                    "{:12}, {:4}, {:>26}, {:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, {:12.1f}, "
+                    "{:13.1f}, {:12.1f}, {:13.1f}, {:13.1f}, {:12.1f}, {:13.1f}\n".format(
+                        key,
+                        freq,
+                        scan.date(),
+                        I,
+                        I_err,
+                        Q,
+                        Q_err,
+                        U,
+                        U_err,
+                        p[0],
+                        p_low[0],
+                        p_high[0],
+                        angle[0],
+                        angle_err[0],
                     )
                 )
             x.append(freq)
-            y.append(flux[freq])
-            z.append(np.diag(flux_err[freq]) ** 0.5)
+            y.append(flux[key])
+            z.append(np.diag(flux_err[key]) ** 0.5)
 
         return flux, flux_err, x, y, z
 
-    def _plot_flux(self, axes, pol, iscan, x, y, z, scan):
+    def _derive_pol(self, I, I_err, Q, Q_err, U, U_err):
+        """ Calculate the polarization fraction and polarization angle
+
+        The errors are asymmetric, we use Monte Carlo to derive confidence limits
+        """
+        I = np.atleast_1d(I)
+        I_err = np.atleast_1d(I_err)
+        Q = np.atleast_1d(Q)
+        Q_err = np.atleast_1d(Q_err)
+        U = np.atleast_1d(U)
+        U_err = np.atleast_1d(U_err)
+        p = np.sqrt(Q ** 2 + U ** 2) / I
+        angle = np.degrees(0.5 * np.arctan2(U, Q)) % 180
+        nmc = 1000
+        n = I.size
+        # Run a Monte Carlo to measure the bias on polarization fraction
+        p_sim0 = np.zeros([nmc, n])
+        # angle_sim0 = np.zeros([nmc, n])
+        for mc in range(nmc):
+            I_sim = I + np.random.randn(I.size) * I_err
+            Q_sim = np.random.randn(Q.size) * Q_err
+            U_sim = np.random.randn(U.size) * U_err
+            p_sim0[mc] = np.sqrt(Q_sim ** 2 + U_sim ** 2) / I_sim
+            # temp = np.degrees(0.5 * np.arctan2(U_sim, Q_sim)) % 180
+            # Choose the right branch
+            # temp[np.abs(temp + 180 - angle) < np.abs(temp - angle)] += 180
+            # temp[np.abs(temp - 180 - angle) < np.abs(temp - angle)] -= 180
+            # angle_sim[mc] = temp
+        p_bias = np.mean(p_sim0, 0)
+        p -= p_bias
+        # Run a Monte Carlo for the confidence limits
+        p_sim = np.zeros([nmc, n])
+        angle_sim = np.zeros([nmc, n])
+        for mc in range(nmc):
+            I_sim = I + np.random.randn(I.size) * I_err
+            Q_sim = Q + np.random.randn(Q.size) * Q_err
+            U_sim = U + np.random.randn(U.size) * U_err
+            p_sim[mc] = np.sqrt(Q_sim ** 2 + U_sim ** 2) / I_sim - p_bias
+            temp = np.degrees(0.5 * np.arctan2(U_sim, Q_sim)) % 180
+            # Choose the right branch
+            temp[np.abs(temp + 180 - angle) < np.abs(temp - angle)] += 180
+            temp[np.abs(temp - 180 - angle) < np.abs(temp - angle)] -= 180
+            angle_sim[mc] = temp
+        # FIXME: this is where we would get the confidence limits rather than sdev
+        p_sim = np.sort(p_sim, 0)
+        p_low = p_sim[int(nmc * 0.16)]
+        p_high = p_sim[int(nmc * 0.84)]
+        # p_err = np.std(p_sim - p, 0)
+        angle_err = np.std(angle_sim - angle, 0)
+        return p, p_low, p_high, angle, angle_err
+
+    def _average_by_frequency(self, freq, value):
+        """ Identify data points in `value` that share frequency and collapse them.
+        """
+        new_freq = []
+        new_value = []
+        for f in freq:
+            if f in new_freq:
+                continue
+            ind = freq == f
+            new_freq.append(f)
+            new_value.append(np.mean(value[ind]))
+        return new_freq, new_value
+
+    def _plot_flux(self, axes, pol, iscan, x, y, z, scan, target):
 
         # Plot the results
 
         freq = np.array(x)
+        if iscan != "Combined":
+            offset = freq * 1.02 ** iscan - freq  # Stagger data points for readability
+            color = [None, "tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown", "tab:pink", "tab:grey", "tab:cyan"][iscan]
+        else:
+            offset = np.zeros(freq.size)
+            color = "black"
         for f in freq:
             self.freqs.add(f)
         try:
@@ -214,13 +331,21 @@ class FluxFitter:
         # Intensity
         axes[0].set_title("Intensity")
         axes[0].errorbar(
-            freq, I, I_err, label="scan {} : {}".format(iscan, scan.date()), fmt="o-",
+            freq + offset,
+            I,
+            I_err,
+            label="scan {} : {}".format(iscan, scan.date()),
+            fmt="o",
+            color=color,
         )
+        xx, yy = self._average_by_frequency(freq + offset, I)
+        axes[0].plot(xx, yy, color=color)
         # axes[0].set_yscale("log")
         axes[0].set_ylabel("Flux [Jy]")
         if pol:
             good = np.logical_or(Q != 0, U != 0)
             freq = freq[good]
+            offset = offset[good]
             I = I[good]
             Q = Q[good]
             U = U[good]
@@ -228,38 +353,48 @@ class FluxFitter:
             Q_err = Q_err[good]
             U_err = U_err[good]
             # Polarization fraction
-            axes[1].set_title("Polarization fraction")
-            p = np.sqrt(Q ** 2 + U ** 2) / I
-            p_err = 0
-            axes[1].errorbar(
-                freq,
-                p,
-                p_err,
-                label="scan {} : {}".format(iscan, scan.date()),
-                fmt="o-",
+            axes[1].set_title("De-biased Polarization fraction")
+            p, p_low, p_high, angle, angle_err = self._derive_pol(
+                I, I_err, Q, Q_err, U, U_err
             )
-            axes[1].set_ylim([0, 0.2])
+            axes[1].errorbar(
+                freq + offset,
+                p,
+                [p - p_low, p_high - p],
+                label="scan {} : {}".format(iscan, scan.date()),
+                fmt="o",
+                color=color,
+            )
+            xx, yy = self._average_by_frequency(freq + offset, p)
+            axes[1].plot(xx, yy, color=color)
+            if target not in ["M1"]:
+                axes[1].set_ylim([-0.1, 0.2])
+                axes[1].set_yscale("log")
+            axes[1].set_ylabel("Polarization fraction")
             # Polarization angle
             axes[2].set_title("Polarization angle, IAU = {}".format(self.IAU_pol))
-            angle = np.degrees(0.5 * np.arctan2(U, Q)) % 180
             med_angle = np.median(angle)
             for i, ang in enumerate(angle):
                 if np.abs(ang - 180 - med_angle) < np.abs(ang - med_angle):
                     angle[i] -= 180
                 elif np.abs(ang + 180 - med_angle) < np.abs(ang - med_angle):
                     angle[i] += 180
-            angle_err = 0
             axes[2].errorbar(
-                freq,
+                freq + offset,
                 angle,
                 angle_err,
                 label="scan {} : {}".format(iscan, scan.date()),
-                fmt="o-",
+                fmt="o",
+                color=color,
             )
-            axes[2].set_ylim([-30, 210])
-            for ang in 0, 180:
-                axes[2].axhline(ang, linestyle="--", color="k", zorder=0)
-            axes[2].set_yticks(np.arange(7) * 30)
+            xx, yy = self._average_by_frequency(freq + offset, angle)
+            axes[2].plot(xx, yy, color=color)
+            if target not in ["M1"]:
+                axes[2].set_ylim([-30, 210])
+                for ang in 0, 180:
+                    axes[2].axhline(ang, linestyle="--", color="k", zorder=0)
+                axes[2].set_yticks(np.arange(7) * 30)
+            axes[2].set_ylabel("Angle [deg]")
         for ax in axes:
             ax.grid(True)
             ax.set_xscale("log")
@@ -420,6 +555,10 @@ class FluxFitter:
             variable = np.any(np.abs(freqflux[good] - mean_flux) > 0.1 * mean_flux)
             if variable:
                 break
+            mean_error = np.mean(freqflux_err[good])
+            variable = np.any(np.abs(freqflux[good] - mean_flux) > 10 * mean_error)
+            if variable:
+                break
         return variable
 
     def fit(self, target, pol=True, color_corrections=None, fname="results.csv"):
@@ -455,6 +594,7 @@ class FluxFitter:
         residuals = {}
         residual_errors = {}
 
+        all_frequency = {}
         all_pointing = {}
         all_data = {}
         all_error = {}
@@ -467,28 +607,39 @@ class FluxFitter:
         for iscan, scan in enumerate(scans):
             all_scan += scan
             print("\nISCAN = {}, {}\n".format(iscan, scan.datetime()))
+            frequency = {}
             pointing = {}
             data = {}
             error = {}
             freqscan = {}
 
             self._sort_data(
-                [scan], mode, pol, pointing, data, error, freqscan, color_corrections
+                [scan],
+                mode,
+                pol,
+                frequency,
+                pointing,
+                data,
+                error,
+                freqscan,
+                color_corrections,
             )
 
-            for freq in pointing:
-                if freq not in all_pointing:
-                    all_pointing[freq] = []
-                    all_data[freq] = []
-                    all_error[freq] = []
-                    all_freqscan[freq] = Scan()
-                all_pointing[freq] += pointing[freq]
-                all_data[freq] += data[freq]
-                all_error[freq] += error[freq]
-                all_freqscan[freq] += freqscan[freq]
+            for key in pointing:
+                if key not in all_pointing:
+                    all_frequency[key] = []
+                    all_pointing[key] = []
+                    all_data[key] = []
+                    all_error[key] = []
+                    all_freqscan[key] = Scan()
+                all_frequency[key] += frequency[key]
+                all_pointing[key] += pointing[key]
+                all_data[key] += data[key]
+                all_error[key] += error[key]
+                all_freqscan[key] += freqscan[key]
 
             flux, flux_err, x, y, z = self._solve_data(
-                pointing, data, error, freqscan, results
+                frequency, pointing, data, error, freqscan, results
             )
             if len(flux) == 0:
                 continue
@@ -504,14 +655,14 @@ class FluxFitter:
                 residual_errors,
                 color_corrections,
             )
-            self._plot_flux(axes, pol, iscan + 1, x, y, z, scan)
+            self._plot_flux(axes, pol, iscan + 1, x, y, z, scan, target)
 
         variable = self._is_variable(all_flux, all_flux_err)
 
         if not variable:
 
             flux, flux_err, x, y, z = self._solve_data(
-                all_pointing, all_data, all_error, all_freqscan, results
+                all_frequency, all_pointing, all_data, all_error, all_freqscan, results
             )
             self._measure_residual(
                 scans,
@@ -523,7 +674,7 @@ class FluxFitter:
                 residual_errors,
                 color_corrections,
             )
-            self._plot_flux(axes, pol, "Combined", x, y, z, all_scan)
+            self._plot_flux(axes, pol, "Combined", x, y, z, all_scan, target)
 
         fig.suptitle(
             "{} - {}, variable = {}, {}, coord = {}".format(

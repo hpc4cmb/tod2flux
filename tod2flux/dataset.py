@@ -3,6 +3,7 @@ import sys
 import time
 
 import astropy.io.fits as pf
+import healpy as hp
 import numpy as np
 from scipy.constants import degree, arcmin
 
@@ -12,7 +13,7 @@ class Dataset:
     and one target.
     """
 
-    def __init__(self, filename, time_offset=None, time_scale=None):
+    def __init__(self, filename, time_offset=None, time_scale=None, background=None):
         """ Instantiate a Dataset object.  The time stamps should be in
         UNIX time.  If the dataset time is in different units, it can
         be modified with time_offset and time_scale.
@@ -21,9 +22,11 @@ class Dataset:
         filename(str) :  Full path to the small dataset FITS file
         time_offset(float) : offset to subtract from the time stamps
         time_scale(float) : scaling to apply to the time stamps
+        background(ndarray) : pre-loaded Healpix map to interpolate and subtract
         """
         self.filename = filename
         self.name = os.path.basename(filename)
+        self.background = background
 
         print("Reading {} ... ".format(filename), flush=True)
         t1 = time.time()
@@ -63,11 +66,24 @@ class Dataset:
             self.time_s += time_offset
         if time_scale is not None:
             self.time_s *= time_scale
-        self.theta = hdulist[1].data.field("THETA").flatten()
-        self.phi = hdulist[1].data.field("PHI").flatten()
-        self.psi = hdulist[1].data.field("PSI").flatten()
         self.signal_mK = hdulist[1].data.field("SIGNAL").flatten()
+        if self.target_lon_deg == 0 and self.target_lat_deg == 0:
+            # SSO mode, moving target
+            if self.background is not None:
+                theta = hdulist[1].data.field("THETA").flatten()
+                phi = hdulist[1].data.field("PHI").flatten()
+                estimate = hp.get_interp_val(self.background, theta, phi)
+                self.signal_mK -= estimate
+            self.theta = np.pi / 2 + hdulist[1].data.field("DTHETA").flatten() * arcmin
+            self.phi = -hdulist[1].data.field("DPHI").flatten() * arcmin
+        else:
+            self.theta = hdulist[1].data.field("THETA").flatten()
+            self.phi = hdulist[1].data.field("PHI").flatten()
+        self.psi = hdulist[1].data.field("PSI").flatten()
 
+        """
+        This code does not support SSO:s yet.
+        Fortunately the small dataset files we have use only one HDU
         print("Concatenating the arrays ...", flush=True)
         for i in range(2, len(hdulist)):
             self.time_s = np.append(
@@ -79,6 +95,7 @@ class Dataset:
             self.signal_mK = np.append(
                 self.signal_mK, hdulist[i].data.field("SIGNAL").flatten()
             )
+        """
 
         # Remove possible zero padding in the arrays
         ind = self.time_s != 0

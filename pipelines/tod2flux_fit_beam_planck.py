@@ -10,6 +10,7 @@ import os
 import sys
 import time
 
+import healpy as hp
 import numpy as np
 
 import tod2flux
@@ -33,6 +34,9 @@ def parse_arguments(comm):
     )
     parser.add_argument(
         "--database", default="fluxes.pck", help="Name of the fit database",
+    )
+    parser.add_argument(
+        "--background", required=False, help="Background map to subtract",
     )
     parser.add_argument(
         "--overwrite",
@@ -84,6 +88,13 @@ def main():
         filenames = None
     filenames = comm.bcast(filenames)
 
+    # Optionally load the background map
+
+    if args.background:
+        bg = hp.read_map(args.background)
+    else:
+        bg = None
+
     # Loop over the files
 
     ifile = -1
@@ -133,7 +144,7 @@ def main():
             print("Loading", filename)
             # Planck time stamps count from 1958-01-01 00:00:00
             dataset = tod2flux.Dataset(
-                filename, time_offset=datetime(1958, 1, 1).timestamp()
+                filename, time_offset=datetime(1958, 1, 1).timestamp(), background=bg
             )
             print(dataset)
 

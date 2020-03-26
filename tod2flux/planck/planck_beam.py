@@ -35,6 +35,7 @@ def parse_gridded_beam(
     ycenter=None,
     xdelta=None,
     ydelta=None,
+    fsample=None,
 ):
     """
     Parse the contents of a fits file containing a square beam map
@@ -152,6 +153,21 @@ def parse_gridded_beam(
     grbeam_interp = scipy.interpolate.RectBivariateSpline(
         grbeam_x, grbeam_y, grbeam.T, kx=1, ky=1
     )
+
+    # TEST: smear the beam
+    """
+    nstep = 11
+    step = (6 * 60) / fsample / nstep
+    beam = np.zeros_like(grbeam)
+    for istep in range(nstep):
+        offset = (istep - nstep // 2) * step
+        beam += grbeam_interp(grbeam_x, grbeam_y+offset, grid=True).T
+    beam /= np.amax(beam)
+    grbeam_interp = scipy.interpolate.RectBivariateSpline(
+        grbeam_x, grbeam_y, beam.T, kx=1, ky=1
+    )
+    """
+    # TEST end
 
     if pol:
         grbeam_interp_Q = scipy.interpolate.RectBivariateSpline(
@@ -428,10 +444,13 @@ class PlanckBeam(Beam):
         self.horn = int(self.detector_name[3:5])
         if self.horn < 24:
             self.freq = 70.0
+            self.fsample = 78.7692
         elif self.horn < 27:
             self.freq = 44.0
+            self.fsample = 46.5455
         else:
             self.freq = 30.0
+            self.fsample = 32.5079
         # To be replaced later with more reliable estimates
         self.fwhm = FREQ2FWHM[self.freq]
 
@@ -443,6 +462,7 @@ class PlanckBeam(Beam):
 
         self.xsign_pxx = -1
         self.ysign_pxx = -1
+        self.base_index = 1
 
         beamfile = os.path.join(
             DATADIR,
@@ -471,7 +491,7 @@ class PlanckBeam(Beam):
             self.grbeam_interp_Q,
             self.grbeam_interp_U,
             eg,
-        ) = parse_gridded_beam(beamfile, pol=self.pol, coord_base=self.base_index)
+        ) = parse_gridded_beam(beamfile, pol=self.pol, coord_base=self.base_index, fsample=self.fsample)
 
         if eg != None:
             self.fwhm, self.ellipticity, self.psi_ell = eg

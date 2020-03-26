@@ -15,6 +15,29 @@ RIMOFILE_LFI = os.path.join(DATADIR, "RIMO_LFI.fits")
 RIMOFILE_HFI = os.path.join(DATADIR, "RIMO_HFI.fits")
 
 
+DETECTOR_SETS = {
+    "030": ["LFI27M", "LFI27S", "LFI28M", "LFI28S"],
+    "044-24": ["LFI24M", "LFI24S"],
+    "044-25/26": ["LFI25M", "LFI25S", "LFI26M", "LFI26S"],
+    "070-18/23": ["LFI18M", "LFI18S", "LFI23M", "LFI23S"],
+    "070-19/22": ["LFI19M", "LFI19S", "LFI22M", "LFI22S"],
+    "070-20/21": ["LFI20M", "LFI20S", "LFI21M", "LFI21S"],
+    "100-1/4": ["100-1a", "100-1b", "100-4a", "100-4b"],
+    "100-2/3": ["100-2a", "100-2b", "100-3a", "100-3b"],
+    "143-1/3": ["143-1a", "143-1b", "143-3a", "143-3b",],
+    "143-2/4": ["143-2a", "143-2b", "143-4a", "143-4b",],
+    "143-swb": ["143-5", "143-6", "143-7"],
+    "217-5/7": ["217-5a", "217-5b", "217-7a", "217-7b",],
+    "217-6/8": ["217-6a", "217-6b", "217-8a", "217-8b",],
+    "217-swb": ["217-1", "217-2", "217-3", "217-4"],
+    "353-3/5": ["353-3a", "353-3b", "353-5a", "353-5b",],
+    "353-4/6": ["353-4a", "353-4b", "353-6a", "353-6b",],
+    "353-swb": ["353-1", "353-2", "353-7", "353-8"],
+    "545": ["545-1", "545-2", "545-4"],
+    "857": ["857-1", "857-2", "857-3", "857-4"],
+}
+
+
 def parse_lfi_rimo(rimofile, detector):
     print("Reading the LFI RIMO from {}".format(rimofile))
 
@@ -122,6 +145,20 @@ class PlanckDetector(Detector):
             ) = parse_hfi_rimo(self.rimofile, name)
         self._beam = PlanckBeam(name, self.psi_uv_deg, self.epsilon, self.fwhm_arcmin)
         self._bandpass = PlanckBandpass(name)
+        self._detector_set = None
+        for detset_name, detset in DETECTOR_SETS.items():
+            if name in detset:
+                if self._detector_set is not None:
+                    raise RuntimeError(
+                        "{} is in multiple detector sets: {}, {}".format(
+                            name, self._detector_set, detset_name
+                        )
+                    )
+                self._detector_set = detset_name
+                break
+        if self._detector_set is None:
+            raise RuntimeError("{} is not in any detector sets".format(name))
+        return
 
     @property
     def beam(self):
@@ -150,3 +187,7 @@ class PlanckDetector(Detector):
     @property
     def nominal_frequency(self):
         return self.frequency
+
+    @property
+    def detector_set(self):
+        return self._detector_set
