@@ -36,7 +36,7 @@ def parse_arguments(comm):
         "--detector", required=False, help="Name of the detector to fit",
     )
     parser.add_argument(
-        "--fit-radius-fwhm", default=2, type=np.int, help="Fit radius in multiples of FWHM",
+        "--fit-radius-fwhm", default=2, type=np.float, help="Fit radius in multiples of FWHM",
     )
     parser.add_argument(
         "--database", default="fluxes.pck", help="Name of the fit database",
