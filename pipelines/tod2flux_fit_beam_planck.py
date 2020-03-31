@@ -4,6 +4,9 @@
 measure the apparent flux density through one detector.
 """
 
+import matplotlib
+matplotlib.use("agg")
+
 import argparse
 from datetime import datetime
 import os
