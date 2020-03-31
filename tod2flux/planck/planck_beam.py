@@ -491,7 +491,9 @@ class PlanckBeam(Beam):
             self.grbeam_interp_Q,
             self.grbeam_interp_U,
             eg,
-        ) = parse_gridded_beam(beamfile, pol=self.pol, coord_base=self.base_index, fsample=self.fsample)
+        ) = parse_gridded_beam(
+            beamfile, pol=self.pol, coord_base=self.base_index, fsample=self.fsample
+        )
 
         if eg != None:
             self.fwhm, self.ellipticity, self.psi_ell = eg

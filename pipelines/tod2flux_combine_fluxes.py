@@ -6,6 +6,7 @@ detectors into an estimate of the polarized flux density.
 
 import argparse
 import os
+import pickle
 import sys
 import time
 
@@ -34,6 +35,12 @@ def parse_arguments():
         type=np.float,
         help="Maximum length of a scan in days",
     )
+    parser.add_argument(
+        "--net-corrections", default=None, help="NET correction file",
+    )
+    parser.add_argument(
+        "--mode", default="LinFit4", help="Fit mode",
+    )
     args = parser.parse_args()
     print("All parameters:")
     print(args, flush=True)
@@ -48,10 +55,20 @@ def main():
 
     database = tod2flux.Database(args.database)
 
+    # Optionally, load NET corrections
+    if args.net_corrections:
+        net_corrections = pickle.load(open(args.net_corrections, "rb"))
+    else:
+        net_corrections = None
+
     # Initialize the fitter
 
     fitter = tod2flux.FluxFitter(
-        database, scan_length=args.scan_length_days, coord=args.coord
+        database,
+        scan_length=args.scan_length_days,
+        coord=args.coord,
+        net_corrections=net_corrections,
+        mode=args.mode,
     )
 
     # Process the database

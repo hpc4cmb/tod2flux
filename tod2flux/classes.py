@@ -60,6 +60,10 @@ class Detector:
         return result
 
     @property
+    def fwhm_arcmin(self):
+        raise RuntimeError("Fell through to virtual method for fwhm_arcmin")
+
+    @property
     def psi_pol_deg(self):
         raise RuntimeError("Fell through to virtual method for psi_pol_deg")
 

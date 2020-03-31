@@ -123,7 +123,7 @@ class PlanckDetector(Detector):
             (
                 self.psi_uv_deg,
                 self._psi_pol_deg,
-                self.fwhm_arcmin,
+                self._fwhm_arcmin,
                 self.ellipticity,
                 self.psi_ell_deg,
                 self._fsample,
@@ -135,7 +135,7 @@ class PlanckDetector(Detector):
             (
                 self.psi_uv_deg,
                 self._psi_pol_deg,
-                self.fwhm_arcmin,
+                self._fwhm_arcmin,
                 self.ellipticity,
                 self.psi_ell_deg,
                 self._fsample,
@@ -143,7 +143,7 @@ class PlanckDetector(Detector):
                 self._sigma_KCMB,
                 self.frequency,
             ) = parse_hfi_rimo(self.rimofile, name)
-        self._beam = PlanckBeam(name, self.psi_uv_deg, self.epsilon, self.fwhm_arcmin)
+        self._beam = PlanckBeam(name, self.psi_uv_deg, self.epsilon, self._fwhm_arcmin)
         self._bandpass = PlanckBandpass(name)
         self._detector_set = None
         for detset_name, detset in DETECTOR_SETS.items():
@@ -167,6 +167,10 @@ class PlanckDetector(Detector):
     @property
     def bandpass(self):
         return self._bandpass
+
+    @property
+    def fwhm_arcmin(self):
+        return self._fwhm_arcmin
 
     @property
     def psi_pol_deg(self):

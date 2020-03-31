@@ -33,6 +33,9 @@ def parse_arguments(comm):
         "--detector", required=False, help="Name of the detector to fit",
     )
     parser.add_argument(
+        "--fit-radius-fwhm", default=2, type=np.int, help="Fit radius in multiples of FWHM",
+    )
+    parser.add_argument(
         "--database", default="fluxes.pck", help="Name of the fit database",
     )
     parser.add_argument(
@@ -116,9 +119,13 @@ def main():
         detector = tod2flux.planck.Detector(detector_name)
         print("detector =", detector)
 
+        # Determine fit radius
+
+        fit_radius = args.fit_radius_fwhm * detector.fwhm_arcmin
+
         # Instantiate fitter
 
-        fitter = tod2flux.DetectorFitter(detector)
+        fitter = tod2flux.DetectorFitter(detector, fit_radius_arcmin=fit_radius)
         print(fitter)
 
         # Fit each file

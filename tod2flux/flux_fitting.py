@@ -64,16 +64,30 @@ class FluxFitter:
         coord(str) : Either C, E or G
         IAU_pol(bool) : Use IAU polarization convention instead of Healpix convention
         detsets(bool) : Split the fits into detector sets rather than by frequency
+        net_corrections(dict) : dictionary of correction factors to
+             apply to the estimated uncertainties
+        mode(string) : Fit mode
 
     """
 
-    def __init__(self, database, scan_length=30, coord="C", IAU_pol=True, detsets=True):
+    def __init__(
+        self,
+        database,
+        scan_length=30,
+        coord="C",
+        IAU_pol=True,
+        detsets=True,
+        net_corrections=None,
+        mode="LinFit4",
+    ):
         self.database = database
         self.scan_length = scan_length
         self.coord = coord
         self.freqs = set()
         self.IAU_pol = IAU_pol
         self.detsets = detsets
+        self.net_corrections = net_corrections
+        self.mode = mode
 
     def _rotate_pol(self, theta_in, phi_in, psi_in, coord_in):
         """ Rotate psi from coord_in to self.coord at (theta_in, phi_in) and
@@ -103,23 +117,14 @@ class FluxFitter:
         return psi_out
 
     def _sort_data(
-        self,
-        scans,
-        mode,
-        pol,
-        frequency,
-        pointing,
-        data,
-        error,
-        freqscan,
-        color_corrections,
+        self, scans, pol, frequency, pointing, data, error, freqscan, color_corrections,
     ):
         """ Sort fit data by frequency
         """
 
         for scan in scans:
             for fit in scan:
-                if mode not in fit.entries:
+                if self.mode not in fit.entries:
                     continue
                 det = fit.detector
                 if color_corrections is not None and det in color_corrections:
@@ -134,7 +139,7 @@ class FluxFitter:
                     key = freq
                 psi = self._rotate_pol(fit.theta, fit.phi, fit.psi_pol, fit.coord)
                 eta = fit.pol_efficiency
-                params = fit.entries[mode]
+                params = fit.entries[self.mode]
                 if key not in pointing:
                     frequency[key] = []
                     pointing[key] = []
@@ -149,7 +154,10 @@ class FluxFitter:
                 else:
                     pointing[key].append([1])
                 data[key].append(params.flux * cc)
-                error[key].append(params.flux_err * cc)
+                if self.net_corrections is not None:
+                    error[key].append(params.flux_err * cc * self.net_corrections[det])
+                else:
+                    error[key].append(params.flux_err * cc)
                 freqscan[key].append(fit)
         return
 
@@ -311,7 +319,29 @@ class FluxFitter:
         freq = np.array(x)
         if iscan != "Combined":
             offset = freq * 1.02 ** iscan - freq  # Stagger data points for readability
-            color = [None, "tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown", "tab:pink", "tab:grey", "tab:cyan"][iscan]
+            color = [
+                None,
+                "tab:blue",
+                "tab:orange",
+                "tab:green",
+                "tab:red",
+                "tab:purple",
+                "tab:brown",
+                "tab:pink",
+                "tab:gray",
+                "tab:olive",
+                "tab:cyan",
+                "tab:blue",
+                "tab:orange",
+                "tab:green",
+                "tab:red",
+                "tab:purple",
+                "tab:brown",
+                "tab:pink",
+                "tab:gray",
+                "tab:olive",
+                "tab:cyan",
+            ][iscan]
         else:
             offset = np.zeros(freq.size)
             color = "black"
@@ -368,8 +398,9 @@ class FluxFitter:
             xx, yy = self._average_by_frequency(freq + offset, p)
             axes[1].plot(xx, yy, color=color)
             if target not in ["M1"]:
-                axes[1].set_ylim([-0.1, 0.2])
-                axes[1].set_yscale("log")
+                axes[1].set_ylim([-0.1, 0.3])
+                axes[1].axhline(0, color="k")
+                # axes[1].set_yscale("log")
             axes[1].set_ylabel("Polarization fraction")
             # Polarization angle
             axes[2].set_title("Polarization angle, IAU = {}".format(self.IAU_pol))
@@ -469,21 +500,13 @@ class FluxFitter:
         return color_corrections, color_correction_errors
 
     def _measure_residual(
-        self,
-        scans,
-        mode,
-        pol,
-        flux,
-        flux_err,
-        residuals,
-        residual_errors,
-        color_corrections,
+        self, scans, pol, flux, flux_err, residuals, residual_errors, color_corrections,
     ):
         # Measure the residual per detector
 
         for scan in scans:
             for fit in scan:
-                if mode not in fit.entries:
+                if self.mode not in fit.entries:
                     continue
                 freq = fit.frequency
                 if freq not in flux:
@@ -501,7 +524,7 @@ class FluxFitter:
                 else:
                     psi = fit.psi_pol
                 eta = fit.pol_efficiency
-                params = fit.entries[mode]
+                params = fit.entries[self.mode]
                 if pol:
                     estimate = (
                         freqflux[0]
@@ -520,7 +543,10 @@ class FluxFitter:
                     residuals[det] = []
                     residual_errors[det] = []
                 detflux = params.flux * cc
-                detflux_err = params.flux_err * cc
+                if self.net_corrections is not None:
+                    detflux_err = params.flux_err * cc * self.net_corrections[det]
+                else:
+                    detflux_err = params.flux_err * cc
                 residuals[det].append(detflux / estimate)
                 residual_errors[det].append(
                     np.sqrt(
@@ -570,8 +596,6 @@ class FluxFitter:
         # Each entry is a list of Fit objects
         all_fits = self.database.targets[target]
         scans = self.find_scans(all_fits)
-        mode = "NLFit6"
-        # mode = "LinFit4"
         fig = plt.figure(figsize=[18, 12])
         axes = []
         for i in range(3):
@@ -615,7 +639,6 @@ class FluxFitter:
 
             self._sort_data(
                 [scan],
-                mode,
                 pol,
                 frequency,
                 pointing,
@@ -647,7 +670,6 @@ class FluxFitter:
             all_flux_err.append(flux_err)
             self._measure_residual(
                 [scan],
-                mode,
                 pol,
                 flux,
                 flux_err,
@@ -666,7 +688,6 @@ class FluxFitter:
             )
             self._measure_residual(
                 scans,
-                mode,
                 pol,
                 flux,
                 flux_err,
@@ -678,7 +699,7 @@ class FluxFitter:
 
         fig.suptitle(
             "{} - {}, variable = {}, {}, coord = {}".format(
-                target, mode, variable, all_scan.date(), self.coord
+                target, self.mode, variable, all_scan.date(), self.coord
             )
         )
         plt.legend(loc="upper left", bbox_to_anchor=[1, 1])
