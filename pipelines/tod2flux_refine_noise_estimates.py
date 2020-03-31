@@ -73,7 +73,7 @@ def main():
                 det, np.mean(rchisq), np.median(rchisq), np.std(rchisq), rchisq.size
             )
         )
-        net_corrections[det] = np.mean(rchisq)
+        net_corrections[det] = np.median(rchisq) ** 2
 
     with open(args.out, "wb") as fout:
         pickle.dump(net_corrections, fout)

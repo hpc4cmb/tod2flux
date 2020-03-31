@@ -319,8 +319,7 @@ class FluxFitter:
         freq = np.array(x)
         if iscan != "Combined":
             offset = freq * 1.02 ** iscan - freq  # Stagger data points for readability
-            color = [
-                None,
+            colors = [None] + [
                 "tab:blue",
                 "tab:orange",
                 "tab:green",
@@ -331,17 +330,8 @@ class FluxFitter:
                 "tab:gray",
                 "tab:olive",
                 "tab:cyan",
-                "tab:blue",
-                "tab:orange",
-                "tab:green",
-                "tab:red",
-                "tab:purple",
-                "tab:brown",
-                "tab:pink",
-                "tab:gray",
-                "tab:olive",
-                "tab:cyan",
-            ][iscan]
+            ] * 3
+            color = colors[iscan]
         else:
             offset = np.zeros(freq.size)
             color = "black"
