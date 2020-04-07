@@ -9,6 +9,63 @@ import numpy as np
 from .utilities import to_UTC, to_date, to_JD, to_MJD, to_DJD, DJDtoUNIX
 
 
+class PlotData:
+    def __init__(self):
+        self.freq = []
+        self.I = []
+        self.I_low = []
+        self.I_high = []
+        self.p = []
+        self.p_low = []
+        self.p_high = []
+        self.angle = []
+        self.angle_low = []
+        self.angle_high = []
+        self.pol = []
+
+    def append(
+        self, freq, I, I_low, I_high, p, p_low, p_high, angle, angle_low, angle_high
+    ):
+        self.freq.append(freq)
+        self.I.append(I)
+        self.I_low.append(I_low)
+        self.I_high.append(I_high)
+        self.p.append(p)
+        self.p_low.append(p_low)
+        self.p_high.append(p_high)
+        self.angle.append(angle)
+        self.angle_low.append(angle_low)
+        self.angle_high.append(angle_high)
+        self.pol.append(p != 0)
+
+    def process(self):
+        self.freq = np.array(self.freq)
+        self.I = np.array(self.I)
+        self.I_low = np.array(self.I_low)
+        self.I_high = np.array(self.I_high)
+        self.p = np.array(self.p)[self.pol]
+        self.p_low = np.array(self.p_low)[self.pol]
+        self.p_high = np.array(self.p_high)[self.pol]
+        self.angle = np.degrees(np.array(self.angle)[self.pol])
+        self.angle_low = np.degrees(np.array(self.angle_low)[self.pol])
+        self.angle_high = np.degrees(np.array(self.angle_high)[self.pol])
+        med_angle = np.median(self.angle)
+        for i, ang in enumerate(self.angle):
+            if np.abs(ang - 180 - med_angle) < np.abs(ang - med_angle):
+                self.angle[i] -= 180
+                self.angle_low[i] -= 180
+                self.angle_high[i] -= 180
+            elif np.abs(ang + 180 - med_angle) < np.abs(ang - med_angle):
+                self.angle[i] += 180
+                self.angle_low[i] += 180
+                self.angle_high[i] += 180
+        self.pol = np.array(self.pol)
+        self.pol_freq = self.freq[self.pol]
+        self.I_err = [self.I - self.I_low, self.I_high - self.I]
+        self.p_err = [self.p - self.p_low, self.p_high - self.p]
+        self.angle_err = [self.angle - self.angle_low, self.angle_high - self.angle]
+
+
 class Scan:
     """ Utility class for organizing flux fit data into scans
     """
@@ -178,7 +235,7 @@ class FluxFitter:
 
         flux = {}
         flux_err = {}
-        x, y, z = [], [], []
+        plot_data = PlotData()
         for key in sorted(pointing):
             freq = np.mean(frequency[key])
             pointing[key] = np.vstack(pointing[key])
@@ -203,12 +260,17 @@ class FluxFitter:
                 # Full polarized solution
                 cov = np.linalg.inv(invcov)
                 proj = np.dot(pnt2, data[key])
-                flux[key] = np.dot(cov, proj)
+                result = np.dot(cov, proj)
+                if result[0] <= 0:
+                    continue
+                flux[key] = result
                 flux_err[key] = cov
             else:
                 # Intensity only solution
                 cov = 1 / invcov[0, 0]
                 proj = np.dot(pnt2[0], data[key])
+                if proj <= 0:
+                    continue
                 flux[key] = np.array([cov * proj, 0, 0])
                 flux_err[key] = np.diag(np.array([cov, 0, 0]))
             print("{} {}GHz".format(key, freq))
@@ -220,12 +282,23 @@ class FluxFitter:
                 scale = 1e3  # mJy
                 I, Q, U = flux[key] * scale
                 I_err, Q_err, U_err = np.sqrt(np.diag(flux_err[key])) * scale
-                p, p_low, p_high, angle, angle_err = self._derive_pol(
-                    I, I_err, Q, Q_err, U, U_err
-                )
+                (
+                    I,
+                    I_low,
+                    I_high,
+                    p,
+                    p_low,
+                    p_high,
+                    angle,
+                    angle_low,
+                    angle_high,
+                ) = self._derive_pol_bayes(flux[key], flux_err[key])
+                # p, p_low, p_high, angle, angle_err = self._derive_pol(
+                #    I, I_err, Q, Q_err, U, U_err
+                # )
                 results.write(
                     "{:12}, {:4}, {:>26}, {:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, {:12.1f}, "
-                    "{:13.1f}, {:12.1f}, {:13.1f}, {:13.1f}, {:12.1f}, {:13.1f}\n".format(
+                    "{:13.1f}, {:12.1f}, {:13.1f}, {:13.1f}, {:12.1f}, {:13.1f} {:13.1f}\n".format(
                         key,
                         freq,
                         scan.date(),
@@ -235,18 +308,120 @@ class FluxFitter:
                         Q_err,
                         U,
                         U_err,
-                        p[0],
-                        p_low[0],
-                        p_high[0],
-                        angle[0],
-                        angle_err[0],
+                        p,
+                        p_low,
+                        p_high,
+                        angle,
+                        angle_low,
+                        angle_high,
                     )
                 )
-            x.append(freq)
-            y.append(flux[key])
-            z.append(np.diag(flux_err[key]) ** 0.5)
+            plot_data.append(
+                freq, I, I_low, I_high, p, p_low, p_high, angle, angle_low, angle_high
+            )
 
-        return flux, flux_err, x, y, z
+        return flux, flux_err, plot_data
+
+    def _derive_pol_bayes(self, flux, flux_err, quantile=0.68):
+        I, Q, U = flux
+        Ierr, Qerr, Uerr = np.sqrt(np.diag(flux_err))
+        if Q == 0 and U == 0:
+            # Unpolarized solution
+            return (
+                I,
+                I - Ierr,
+                I + Ierr,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+        p = np.sqrt(Q ** 2 + U ** 2) / I
+        angle = 0.5 * np.arctan2(U, Q)
+        if angle < 0:
+            angle += np.pi
+        invcov = np.linalg.inv(flux_err)
+        # scale the covariance to sensible units
+        # scale = 1 / np.mean(np.diag(invcov))
+        # invcov *= scale
+
+        def likelihood(I0, p0, angle0):
+            d = np.array(
+                [
+                    I - I0,
+                    p * I * np.cos(2 * angle) - p0 * I0 * np.cos(2 * angle0),
+                    p * I * np.sin(2 * angle) - p0 * I0 * np.sin(2 * angle0),
+                ]
+            )
+            dcov = np.array(
+                [
+                    invcov[0, 0] * d[0] + invcov[0, 1] * d[1] + invcov[0, 2] * d[2],
+                    invcov[1, 0] * d[0] + invcov[1, 1] * d[1] + invcov[1, 2] * d[2],
+                    invcov[2, 0] * d[0] + invcov[2, 1] * d[1] + invcov[2, 2] * d[2],
+                ]
+            )
+            dd = d[0] * dcov[0] + d[1] * dcov[1] + d[2] * dcov[2]
+            return np.exp(-0.5 * dd)
+
+        n = 100000
+        nsigma = 4
+
+        Imin = max(0, I - nsigma * Ierr)
+        Imax = I + nsigma * Ierr
+        Ivec = np.random.rand(n) * (Imax - Imin) + Imin
+
+        perr = np.sqrt(Qerr ** 2 + Uerr ** 2) / I
+        pmin = max(0, p - nsigma * perr)
+        pmax = p + nsigma * perr
+        pvec = np.random.rand(n) * (pmax - pmin) + pmin
+
+        angleerr = 0.5 / (Q ** 2 + U ** 2) * (np.abs(Q) * Uerr + np.abs(U) * Qerr)
+        anglemin = angle - nsigma * angleerr
+        anglemax = angle + nsigma * angleerr
+        anglevec = np.random.rand(n) * (anglemax - anglemin) + anglemin
+
+        prob = likelihood(Ivec, pvec, anglevec)
+        ind = np.argsort(prob)[::-1]
+        sorted_prob = prob[ind]
+        total_prob = np.sum(prob)
+
+        i1sigma = 0
+        cumulative_prob = 0
+        while cumulative_prob < 0.68 * total_prob:
+            cumulative_prob += sorted_prob[i1sigma]
+            i1sigma += 1
+        if i1sigma == 0:
+            import pdb
+
+            pdb.set_trace()
+        Icut1 = Ivec[ind][:i1sigma]
+        pcut1 = pvec[ind][:i1sigma]
+        anglecut1 = anglevec[ind][:i1sigma]
+
+        i2sigma = 0
+        cumulative_prob = 0
+        while cumulative_prob < 0.95 * total_prob:
+            cumulative_prob += sorted_prob[i2sigma]
+            i2sigma += 1
+        Icut2 = Ivec[ind][:i2sigma]
+        pcut2 = pvec[ind][:i2sigma]
+        anglecut2 = anglevec[ind][:i2sigma]
+
+        Imin = np.amin(Icut1)
+        Imax = np.amax(Icut1)
+        if np.amin(pcut2) < 0.01:
+            # No lower limit on polarization fraction, use two sigma upper limit
+            pmin = 0
+            pmax = np.amax(pcut2)
+        else:
+            pmin = np.amin(pcut1)
+            pmax = np.amax(pcut1)
+        anglemin = np.amin(anglecut1)
+        anglemax = np.amax(anglecut1)
+
+        return (I, Imin, Imax, p, pmin, pmax, angle, anglemin, anglemax)
 
     def _derive_pol(self, I, I_err, Q, Q_err, U, U_err):
         """ Calculate the polarization fraction and polarization angle
@@ -312,13 +487,15 @@ class FluxFitter:
             new_value.append(np.mean(value[ind]))
         return new_freq, new_value
 
-    def _plot_flux(self, axes, pol, iscan, x, y, z, scan, target):
+    def _plot_flux(self, axes, pol, iscan, plot_data, scan, target):
 
         # Plot the results
 
-        freq = np.array(x)
+        plot_data.process()
         if iscan != "Combined":
-            offset = freq * 1.02 ** iscan - freq  # Stagger data points for readability
+            plot_freq = (
+                plot_data.freq * 1.02 ** iscan
+            )  # Stagger data points for readability
             colors = [None] + [
                 "tab:blue",
                 "tab:orange",
@@ -333,82 +510,54 @@ class FluxFitter:
             ] * 3
             color = colors[iscan]
         else:
-            offset = np.zeros(freq.size)
+            plot_freq = plot_data.freq
             color = "black"
-        for f in freq:
+        for f in plot_data.freq:
             self.freqs.add(f)
-        try:
-            if pol:
-                I, Q, U = np.vstack(y).T.copy()
-                I_err, Q_err, U_err = np.vstack(z).T.copy() ** 0.5
-            else:
-                (I,) = np.vstack(y).T.copy()
-                (I_err,) = np.vstack(z).T.copy() ** 0.5
-        except:
-            # import pdb
-            # pdb.set_trace()
-            return
         # Intensity
         axes[0].set_title("Intensity")
         axes[0].errorbar(
-            freq + offset,
-            I,
-            I_err,
+            plot_freq,
+            plot_data.I,
+            plot_data.I_err,
             label="scan {} : {}".format(iscan, scan.date()),
             fmt="o",
             color=color,
         )
-        xx, yy = self._average_by_frequency(freq + offset, I)
+        xx, yy = self._average_by_frequency(plot_freq, plot_data.I)
         axes[0].plot(xx, yy, color=color)
-        # axes[0].set_yscale("log")
+        axes[0].set_yscale("log")
         axes[0].set_ylabel("Flux [Jy]")
         if pol:
-            good = np.logical_or(Q != 0, U != 0)
-            freq = freq[good]
-            offset = offset[good]
-            I = I[good]
-            Q = Q[good]
-            U = U[good]
-            I_err = I_err[good]
-            Q_err = Q_err[good]
-            U_err = U_err[good]
+            plot_freq = plot_freq[plot_data.pol]
             # Polarization fraction
-            axes[1].set_title("De-biased Polarization fraction")
-            p, p_low, p_high, angle, angle_err = self._derive_pol(
-                I, I_err, Q, Q_err, U, U_err
-            )
+            axes[1].set_title("Polarization fraction")
             axes[1].errorbar(
-                freq + offset,
-                p,
-                [p - p_low, p_high - p],
+                plot_freq,
+                plot_data.p,
+                plot_data.p_err,
                 label="scan {} : {}".format(iscan, scan.date()),
                 fmt="o",
                 color=color,
             )
-            xx, yy = self._average_by_frequency(freq + offset, p)
+            xx, yy = self._average_by_frequency(plot_freq, plot_data.p)
             axes[1].plot(xx, yy, color=color)
             if target not in ["M1"]:
-                axes[1].set_ylim([-0.1, 0.3])
+                axes[1].set_ylim([-0.01, 0.6])
                 axes[1].axhline(0, color="k")
                 # axes[1].set_yscale("log")
             axes[1].set_ylabel("Polarization fraction")
             # Polarization angle
             axes[2].set_title("Polarization angle, IAU = {}".format(self.IAU_pol))
-            med_angle = np.median(angle)
-            for i, ang in enumerate(angle):
-                if np.abs(ang - 180 - med_angle) < np.abs(ang - med_angle):
-                    angle[i] -= 180
-                elif np.abs(ang + 180 - med_angle) < np.abs(ang - med_angle):
-                    angle[i] += 180
             axes[2].errorbar(
-                freq + offset,
-                angle,
-                angle_err,
+                plot_freq,
+                plot_data.angle,
+                plot_data.angle_err,
                 label="scan {} : {}".format(iscan, scan.date()),
                 fmt="o",
                 color=color,
             )
-            xx, yy = self._average_by_frequency(freq + offset, angle)
+            xx, yy = self._average_by_frequency(plot_freq, plot_data.angle)
             axes[2].plot(xx, yy, color=color)
             if target not in ["M1"]:
                 axes[2].set_ylim([-30, 210])
@@ -651,7 +800,7 @@ class FluxFitter:
                 all_error[key] += error[key]
                 all_freqscan[key] += freqscan[key]
 
-            flux, flux_err, x, y, z = self._solve_data(
+            flux, flux_err, plot_data = self._solve_data(
                 frequency, pointing, data, error, freqscan, results
             )
             if len(flux) == 0:
@@ -667,13 +816,13 @@ class FluxFitter:
                 residual_errors,
                 color_corrections,
             )
-            self._plot_flux(axes, pol, iscan + 1, x, y, z, scan, target)
+            self._plot_flux(axes, pol, iscan + 1, plot_data, scan, target)
 
         variable = self._is_variable(all_flux, all_flux_err)
 
         if not variable:
 
-            flux, flux_err, x, y, z = self._solve_data(
+            flux, flux_err, plot_data = self._solve_data(
                 all_frequency, all_pointing, all_data, all_error, all_freqscan, results
             )
             self._measure_residual(
@@ -685,7 +834,7 @@ class FluxFitter:
                 residual_errors,
                 color_corrections,
             )
-            self._plot_flux(axes, pol, "Combined", x, y, z, all_scan, target)
+            self._plot_flux(axes, pol, "Combined", plot_data, all_scan, target)
 
         fig.suptitle(
             "{} - {}, variable = {}, {}, coord = {}".format(

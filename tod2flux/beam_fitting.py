@@ -33,9 +33,18 @@ class DetectorFitter:
         gap_length_s (float) : minimum separation in time stamps to split
              the scan [seconds]
         fit_radius_arcmin (float) : fitting radius in arc minutes.
+        correlation_length (float):  time between statistically independent samples
+        njackknife (int):  Number of jackknife subsets to test for uncertainties
     """
 
-    def __init__(self, detector, gap_length_s=86400, fit_radius_arcmin=1000):
+    def __init__(
+        self,
+        detector,
+        gap_length_s=86400,
+        fit_radius_arcmin=1000,
+        correlation_length=60,
+        njackknife=25,
+    ):
         self.detector = detector
         self.gap_length_s = gap_length_s
         self.fit_radius_arcmin = fit_radius_arcmin
@@ -46,6 +55,8 @@ class DetectorFitter:
         self.bin_lim = np.arange(self.nbin + 1) * self.wbin - self.radius
         self.Y, self.X = np.meshgrid(self.bin_center, self.bin_center)
         self.Y_lim, self.X_lim = np.meshgrid(self.bin_lim, self.bin_lim)
+        self.correlation_length = correlation_length
+        self.njackknife = njackknife
 
     def fit(self, dataset):
         print(
@@ -514,12 +525,32 @@ class DetectorFitter:
 
         ntemplate = len(templates)
         templates = np.vstack(templates)
-        invcov = np.dot(templates, templates.T) / sigma ** 2
-        cov = np.linalg.inv(invcov)
-        proj = np.dot(templates, signal) / sigma ** 2
 
-        template_amplitudes = np.dot(cov, proj)
-        template_errors = np.diag(cov)
+        jackknife_amplitudes = []
+        subset = (times // self.correlation_length).astype(np.int) % self.njackknife
+        for ijack in range(self.njackknife + 1):
+            if ijack < self.njackknife:
+                good = subset != ijack
+                jacktemplates = templates[:, good].copy()
+                jacksignal = signal[good].copy()
+            else:
+                jacktemplates = templates
+                jacksignal = signal
+            invcov = np.dot(jacktemplates, jacktemplates.T) / sigma ** 2
+            cov = np.linalg.inv(invcov)
+            proj = np.dot(jacktemplates, jacksignal) / sigma ** 2
+            if ijack < self.njackknife:
+                jackknife_amplitudes.append(np.dot(cov, proj))
+            else:
+                template_amplitudes = np.dot(cov, proj)
+        jackknife_amplitudes = np.vstack(jackknife_amplitudes)
+        jackknife_errors = (
+            (self.njackknife - 1)
+            / self.njackknife
+            * np.sum((jackknife_amplitudes - template_amplitudes) ** 2, 0)
+        )
+        # template_errors = np.diag(cov)
+        template_errors = jackknife_errors  # More reliable
 
         resid = np.copy(signal)
         for amplitude, template in zip(template_amplitudes, templates):
