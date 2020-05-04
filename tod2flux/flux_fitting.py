@@ -421,6 +421,37 @@ class FluxFitter:
         anglemin = np.amin(anglecut1)
         anglemax = np.amax(anglecut1)
 
+        # Replace the polarization fraction estimate using the asymptotic estimator
+
+        if np.abs(Qerr ** 2 - Uerr ** 2) < 1e-6:
+            noise_bias = Qerr * Uerr / I ** 2
+        else:
+            rho = flux_err[1, 2] / np.sqrt(flux_err[1, 1] * flux_err[2, 2])
+            theta = 0.5 * np.arctan2(2 * rho * Qerr * Uerr, Qerr ** 2 - Uerr ** 2)
+            sigma_Qsquared = (
+                (Qerr * np.cos(theta)) ** 2
+                + (Uerr * np.sin(theta)) ** 2
+                + rho * Qerr * Uerr * np.sin(2 * theta)
+            )
+            sigma_Usquared = (
+                (Qerr * np.sin(theta)) ** 2
+                + (Uerr * np.cos(theta)) ** 2
+                - rho * Qerr * Uerr * np.sin(2 * theta)
+            )
+            noise_bias = (
+                sigma_Usquared * np.cos(2 * angle - theta) ** 2
+                + sigma_Qsquared * np.sin(2 * angle - theta) ** 2
+            ) / I ** 2
+
+        if p ** 2 > noise_bias:
+            p = np.sqrt(p ** 2 - noise_bias)
+            pmin = np.amin(pcut1)
+            pmax = np.amax(pcut1)
+        else:
+            p = 0
+            pmin = 0
+            pmax = np.amax(pcut2)
+
         return (I, Imin, Imax, p, pmin, pmax, angle, anglemin, anglemax)
 
     def _derive_pol(self, I, I_err, Q, Q_err, U, U_err):
@@ -528,6 +559,11 @@ class FluxFitter:
         axes[0].plot(xx, yy, color=color)
         axes[0].set_yscale("log")
         axes[0].set_ylabel("Flux [Jy]")
+        ymin, ymax = axes[0].get_ylim()
+        # if ymin < 1e-1:
+        axes[0].set_ylim(bottom=5e-2)
+        if ymax < 1e1:
+            axes[0].set_ylim(top=1e1)
         if pol:
             plot_freq = plot_freq[plot_data.pol]
             # Polarization fraction

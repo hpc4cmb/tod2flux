@@ -464,7 +464,7 @@ class DetectorFitter:
         fit_gradient=False,
         derivative_order=0,
     ):
-        """ Assume an fixed beam and perform a GLS fit of the templates
+        """ Assume a fixed beam and perform a GLS fit of the templates
 
         """
         print(
@@ -476,6 +476,16 @@ class DetectorFitter:
         t1 = time.time()
 
         sigma = self.detector.sigma_KCMB * 1e3
+
+        # Sort the data by distance to the center
+        r = np.sqrt(phi ** 2 + theta ** 2)
+        ind = np.argsort(r)
+        orig = np.arange(r.size)[ind]
+        times = times[ind].copy()
+        phi = phi[ind].copy()
+        theta = theta[ind].copy()
+        signal = signal[ind].copy()
+        r = r[ind].copy()
 
         beam = self.detector.beam.get_beam(phi, theta)
 
@@ -549,8 +559,8 @@ class DetectorFitter:
             / self.njackknife
             * np.sum((jackknife_amplitudes - template_amplitudes) ** 2, 0)
         )
-        # template_errors = np.diag(cov)
-        template_errors = jackknife_errors  # More reliable
+        # template_errors = np.diag(cov) ** .5
+        template_errors = jackknife_errors ** 0.5  # More reliable
 
         resid = np.copy(signal)
         for amplitude, template in zip(template_amplitudes, templates):
@@ -591,6 +601,30 @@ class DetectorFitter:
             param_units,
         )
         fit.add_entry(entry)
+
+        """
+        rlims = []
+        ramplitudes = []
+        rerrors = []
+        for f in np.linspace(0.5, 1, 100):
+            rlim = r[-1] * f
+            i = np.argwhere(r < rlim).ravel()[-1]
+            ind = slice(0, i + 1)
+            ttemplates = templates[:, ind].copy()
+            invcov = np.dot(ttemplates, ttemplates.T) / sigma ** 2
+            cov = np.linalg.inv(invcov)
+            proj = np.dot(ttemplates, signal[ind]) / sigma ** 2
+            amplitudes = np.dot(cov, proj)
+            rlims.append(rlim)
+            ramplitudes.append(amplitudes)
+            rerrors.append(np.diag(cov) ** .5)
+        rlims = np.array(rlims)
+        ramplitudes = np.vstack(ramplitudes).T
+        rerrors = np.vstack(rerrors).T
+        plt.clf(); plt.errorbar(rlims, ramplitudes[0], rerrors[0]); plt.savefig("test.png")
+        import pdb
+        pdb.set_trace()
+        """
 
         self.plot_signal(
             phi,
@@ -721,7 +755,7 @@ class DetectorFitter:
         jacobian = result.jac
         invcov = np.dot(jacobian.T, jacobian)
         cov = np.linalg.inv(invcov) * np.var(resid)
-        errors = np.diag(cov)
+        errors = np.diag(cov) ** 0.5
 
         params = OrderedDict()
         param_errors = OrderedDict()
