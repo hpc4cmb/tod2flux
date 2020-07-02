@@ -101,6 +101,8 @@ def main():
     # Optionally load the background map
 
     if args.background:
+        if comm.rank == 0:
+            print("Loading background map from {}".format(args.background), flush=True)
         bg = hp.read_map(args.background)
     else:
         bg = None

@@ -67,13 +67,13 @@ class Dataset:
         if time_scale is not None:
             self.time_s *= time_scale
         self.signal_mK = hdulist[1].data.field("SIGNAL").flatten()
+        if self.background is not None:
+            theta = hdulist[1].data.field("THETA").flatten()
+            phi = hdulist[1].data.field("PHI").flatten()
+            estimate = hp.get_interp_val(self.background, theta, phi)
+            self.signal_mK -= estimate
         if self.target_lon_deg == 0 and self.target_lat_deg == 0:
             # SSO mode, moving target
-            if self.background is not None:
-                theta = hdulist[1].data.field("THETA").flatten()
-                phi = hdulist[1].data.field("PHI").flatten()
-                estimate = hp.get_interp_val(self.background, theta, phi)
-                self.signal_mK -= estimate
             self.theta = np.pi / 2 + hdulist[1].data.field("DTHETA").flatten() * arcmin
             self.phi = -hdulist[1].data.field("DPHI").flatten() * arcmin
         else:
