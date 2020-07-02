@@ -119,11 +119,15 @@ class FluxFitter:
         scan_length(float) : Maximum length of a single scan across
             the target in days
         coord(str) : Either C, E or G
-        IAU_pol(bool) : Use IAU polarization convention instead of Healpix convention
-        detsets(bool) : Split the fits into detector sets rather than by frequency
+        IAU_pol(bool) : Use IAU polarization convention instead of
+            Healpix convention
+        detsets(bool) : Split the fits into detector sets rather than by
+            frequency
         net_corrections(dict) : dictionary of correction factors to
              apply to the estimated uncertainties
         mode(string) : Fit mode
+        target_dict(dict) :  Dictionary to use to replace target names
+             in the database
 
     """
 
@@ -136,6 +140,8 @@ class FluxFitter:
         detsets=True,
         net_corrections=None,
         mode="LinFit4",
+        target_dict=None,
+        bgmap=None,
     ):
         self.database = database
         self.scan_length = scan_length
@@ -145,6 +151,14 @@ class FluxFitter:
         self.detsets = detsets
         self.net_corrections = net_corrections
         self.mode = mode
+        self.target_dict = target_dict
+        self.bgmap = bgmap
+        if self.bgmap is not None:
+            self.sorted_bgmap = np.sort(bgmap)
+            npix = self.sorted_bgmap.size
+            self.bgmin = self.sorted_bgmap[0]
+            self.bgmax = self.sorted_bgmap[int(npix * 0.85)]
+        return
 
     def _rotate_pol(self, theta_in, phi_in, psi_in, coord_in):
         """ Rotate psi from coord_in to self.coord at (theta_in, phi_in) and
@@ -215,6 +229,7 @@ class FluxFitter:
                     error[key].append(params.flux_err * cc * self.net_corrections[det])
                 else:
                     error[key].append(params.flux_err * cc)
+                # error[key][-1] = error[key][-1] ** .5  # TEMPORARY
                 freqscan[key].append(fit)
         return
 
@@ -283,7 +298,7 @@ class FluxFitter:
                 I, Q, U = flux[key] * scale
                 I_err, Q_err, U_err = np.sqrt(np.diag(flux_err[key])) * scale
                 (
-                    I,
+                    _,
                     I_low,
                     I_high,
                     p,
@@ -297,9 +312,9 @@ class FluxFitter:
                 #    I, I_err, Q, Q_err, U, U_err
                 # )
                 results.write(
-                    "{:12}, {:4}, {:>26}, {:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, {:12.1f}, "
-                    "{:13.1f}, {:12.1f}, {:13.1f}, {:13.1f}, {:12.1f}, {:13.1f} {:13.1f}\n".format(
-                        key,
+                    "{:10}, {:>26}, "
+                    "{:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, "
+                    "{:12.4f}, {:12.4f}, {:12.4f}, {:13.3f}, {:10.3f} {:10.3f}\n".format(
                         freq,
                         scan.date(),
                         I,
@@ -311,9 +326,9 @@ class FluxFitter:
                         p,
                         p_low,
                         p_high,
-                        angle,
-                        angle_low,
-                        angle_high,
+                        np.degrees(angle),
+                        np.degrees(angle_low),
+                        np.degrees(angle_high),
                     )
                 )
             plot_data.append(
@@ -392,10 +407,6 @@ class FluxFitter:
         while cumulative_prob < 0.68 * total_prob:
             cumulative_prob += sorted_prob[i1sigma]
             i1sigma += 1
-        if i1sigma == 0:
-            import pdb
-
-            pdb.set_trace()
         Icut1 = Ivec[ind][:i1sigma]
         pcut1 = pvec[ind][:i1sigma]
         anglecut1 = anglevec[ind][:i1sigma]
@@ -443,7 +454,7 @@ class FluxFitter:
                 + sigma_Qsquared * np.sin(2 * angle - theta) ** 2
             ) / I ** 2
 
-        if p ** 2 > noise_bias:
+        if p ** 2 > noise_bias and np.amax(pcut1) < 0.4:
             p = np.sqrt(p ** 2 - noise_bias)
             pmin = np.amin(pcut1)
             pmax = np.amax(pcut1)
@@ -562,8 +573,13 @@ class FluxFitter:
         ymin, ymax = axes[0].get_ylim()
         # if ymin < 1e-1:
         axes[0].set_ylim(bottom=5e-2)
-        if ymax < 1e1:
+        datamax = np.amax(plot_data.I + plot_data.I_err)
+        if max(ymax, datamax * 1.2) < 1.1e1:
             axes[0].set_ylim(top=1e1)
+        elif max(ymax, datamax * 1.2) < 1.1e2:
+            axes[0].set_ylim(top=1e2)
+        else:
+            axes[0].set_ylim(top=1e3)
         if pol:
             plot_freq = plot_freq[plot_data.pol]
             # Polarization fraction
@@ -579,7 +595,7 @@ class FluxFitter:
             xx, yy = self._average_by_frequency(plot_freq, plot_data.p)
             axes[1].plot(xx, yy, color=color)
             if target not in ["M1"]:
-                axes[1].set_ylim([-0.01, 0.6])
+                axes[1].set_ylim([-0.01, 0.4])
                 axes[1].axhline(0, color="k")
                 # axes[1].set_yscale("log")
             axes[1].set_ylabel("Polarization fraction")
@@ -762,11 +778,17 @@ class FluxFitter:
                 break
         return variable
 
-    def fit(self, target, pol=True, color_corrections=None, fname="results.csv"):
+    def fit(
+        self, target, pol=True, color_corrections=None, fname="results.csv",
+    ):
         if color_corrections is None:
             ccstring = ""
         else:
             ccstring = "_ccorrected"
+        if self.target_dict is not None and target in self.target_dict:
+            name = target + " a.k.a. " + self.target_dict[target]
+        else:
+            name = target
         # Get all entries in the database for this target.
         # Each entry is a list of Fit objects
         all_fits = self.database.targets[target]
@@ -777,9 +799,11 @@ class FluxFitter:
             axes.append(fig.add_subplot(2, 2, 1 + i))
 
         results = open(fname, "w")
-        results.write("# Target = {}\n".format(target))
+        results.write("# Target = {}\n".format(name))
         results.write(
-            "# {:>10}, {:>26}, {:>12}, {:>13}, {:>12}, {:>13}, {:>12}, {:>13}\n".format(
+            "# {:>10}, {:>26}, "
+            "{:>12}, {:>13}, {:>12}, {:>13}, {:>12}, {:>13}"
+            "{:>12}, {:>13}, {:>12}, {:>13}, {:>12}, {:>13}\n".format(
                 "freq [GHz]",
                 "time",
                 "I flux [mJy]",
@@ -788,6 +812,12 @@ class FluxFitter:
                 "Q error [mJy]",
                 "U flux [mJy]",
                 "U error [mJy]",
+                "Pol.Frac",
+                "PF low lim",
+                "PF high lim",
+                "Pol.Ang [deg]",
+                "PA low lim",
+                "PA high lim",
             )
         )
         residuals = {}
@@ -872,12 +902,39 @@ class FluxFitter:
             )
             self._plot_flux(axes, pol, "Combined", plot_data, all_scan, target)
 
-        fig.suptitle(
+        title = fig.suptitle(
             "{} - {}, variable = {}, {}, coord = {}".format(
-                target, self.mode, variable, all_scan.date(), self.coord
+                name, self.mode, variable, all_scan.date(), self.coord
             )
         )
         plt.legend(loc="upper left", bbox_to_anchor=[1, 1])
+
+        theta = all_fits[0][0].theta
+        phi = all_fits[0][0].phi
+        coord = all_fits[0][0].coord
+        # hp.mollview(np.zeros(12) + hp.UNSEEN, coord="G", sub=[2, 3, 6], cbar=False)
+        if self.bgmap is None:
+            bgmap = np.zeros(12) + hp.UNSEEN
+        else:
+            bgmap = self.bgmap.copy()
+            vec = hp.ang2vec(theta, phi)
+            radius1 = np.radians(1)
+            radius2 = np.radians(2)
+            nside = hp.get_nside(bgmap)
+            pix1 = hp.query_disc(nside, vec, radius1)
+            pix2 = hp.query_disc(nside, vec, radius2)
+            pix = np.array(list(set(pix2) - set(pix1)))
+            val = np.median(bgmap[pix])
+            bgmap[bgmap < self.bgmin] = self.bgmin
+            bgmap[bgmap > self.bgmax] = self.bgmax
+            frac = np.argmin(np.abs(self.sorted_bgmap - val)) / bgmap.size
+            title.set_text(title.get_text() + " background level = {:.2f}".format(frac))
+        hp.mollview(
+            bgmap, cmap="magma", title="Position (Galactic)", sub=[2, 3, 6], cbar=False,
+        )
+        hp.graticule(22.5, verbose=False, color="w")
+        hp.projplot(theta, phi, "ro", coord=coord)
+
         fname = "flux_fit_{}{}.png".format(target, ccstring)
         plt.savefig(fname)
         plt.close()

@@ -96,10 +96,11 @@ class DetectorFitter:
 
         outer, inner, quadrants = self.crop_data(target_theta, target_phi, theta, phi)
         print("\nOUTER = {}, INNER = {}\n".format(np.sum(outer), np.sum(inner)))
-        if np.sum(inner) < 10:
+        ninner = np.sum(inner)
+        if ninner < 10:
             print("Empty scan, no processing done", flush=True)
             return None
-        if np.any(quadrants < 10):
+        if np.any(quadrants < 0.1 * ninner):
             print("Incomplete scan, no processing done", flush=True)
             return None
         times = times[outer]
