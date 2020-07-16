@@ -44,6 +44,7 @@ class DetectorFitter:
         fit_radius_arcmin=1000,
         correlation_length=60,
         njackknife=25,
+        sim_mode=False,
     ):
         self.detector = detector
         self.gap_length_s = gap_length_s
@@ -57,6 +58,7 @@ class DetectorFitter:
         self.Y_lim, self.X_lim = np.meshgrid(self.bin_lim, self.bin_lim)
         self.correlation_length = correlation_length
         self.njackknife = njackknife
+        self.sim_mode = sim_mode
 
     def fit(self, dataset):
         print(
@@ -121,6 +123,11 @@ class DetectorFitter:
         if result is None:
             return None
         scan_phi_arcmin, scan_theta_arcmin = result
+
+        if self.sim_mode:
+            self.simulate(
+                times, scan_phi_arcmin, scan_theta_arcmin, signal_mK, psi_pol, pol_eff,
+            )
 
         fit = Fit(
             dataset.name,
@@ -441,18 +448,50 @@ class DetectorFitter:
         outer = cos_dist > cos_lim_outer
         inner = cos_dist > cos_lim_inner
         # Count samples in each quadrant
+        dphi = phi - target_phi
+        dphi[dphi > np.pi] -= 2 * np.pi
+        dtheta = theta - target_theta
         quadrants = np.array(
             [
-                np.sum(inner * (target_phi > phi) * (target_theta > theta)),
-                np.sum(inner * (target_phi > phi) * (target_theta < theta)),
-                np.sum(inner * (target_phi < phi) * (target_theta > theta)),
-                np.sum(inner * (target_phi < phi) * (target_theta < theta)),
+                np.sum(inner * (dphi > 0) * (dtheta > 0)),
+                np.sum(inner * (dphi < 0) * (dtheta > 0)),
+                np.sum(inner * (dphi < 0) * (dtheta < 0)),
+                np.sum(inner * (dphi > 0) * (dtheta < 0)),
             ]
         )
 
         t2 = time.time()
         print("Done in {:6.2f} s".format(t2 - t1))
         return outer, inner, quadrants
+
+    def simulate(
+        self,
+        times,  # UNIX time
+        phi,  # arc min
+        theta,  # arc min
+        signal,  # mK
+        psi_pol,
+        pol_eff,
+    ):
+        """ Add a synthetic source onto the data
+
+        """
+        print(
+            "\nSimulating a source", flush=True,
+        )
+        t1 = time.time()
+
+        flux = 1.0
+        phi_offset = 0
+        theta_offset = 0
+
+        beam = self.detector.beam.get_beam(phi + phi_offset, theta + theta_offset)
+
+        mK2MJySr, _ = self.detector.temperature_to_flux(1, 0)
+
+        signal[:] += beam * flux / mK2MJySr
+
+        return
 
     def linear_fit(
         self,

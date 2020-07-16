@@ -63,6 +63,13 @@ def parse_arguments(comm):
         dest="overwrite",
     )
     parser.set_defaults(overwrite=False)
+    parser.add_argument(
+        "--simulate",
+        required=False,
+        action="store_true",
+        help="In simulation mode, synthetic source is added onto  the TOD",
+        dest="simulate",
+    )
 
     args = parser.parse_args()
     if comm.rank == 0:
@@ -134,7 +141,9 @@ def main():
 
         # Instantiate fitter
 
-        fitter = tod2flux.DetectorFitter(detector, fit_radius_arcmin=fit_radius)
+        fitter = tod2flux.DetectorFitter(
+            detector, fit_radius_arcmin=fit_radius, sim_mode=args.simulate
+        )
         print(fitter)
 
         # Fit each file

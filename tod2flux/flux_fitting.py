@@ -294,9 +294,9 @@ class FluxFitter:
                 "  flux = {} +- {}".format(flux[key], np.sqrt(np.diag(flux_err[key])))
             )
             if results is not None:
-                scale = 1e3  # mJy
-                I, Q, U = flux[key] * scale
-                I_err, Q_err, U_err = np.sqrt(np.diag(flux_err[key])) * scale
+                #scale = 1e3  # mJy
+                I, Q, U = flux[key] # * scale
+                I_err, Q_err, U_err = np.sqrt(np.diag(flux_err[key])) # * scale
                 (
                     _,
                     I_low,
@@ -311,18 +311,19 @@ class FluxFitter:
                 # p, p_low, p_high, angle, angle_err = self._derive_pol(
                 #    I, I_err, Q, Q_err, U, U_err
                 # )
+                scale = 1e3  # mJy
                 results.write(
                     "{:10}, {:>26}, "
                     "{:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, "
                     "{:12.4f}, {:12.4f}, {:12.4f}, {:13.3f}, {:10.3f} {:10.3f}\n".format(
                         freq,
                         scan.date(),
-                        I,
-                        I_err,
-                        Q,
-                        Q_err,
-                        U,
-                        U_err,
+                        I * scale,
+                        I_err * scale,
+                        Q * scale,
+                        Q_err * scale,
+                        U * scale,
+                        U_err * scale,
                         p,
                         p_low,
                         p_high,
