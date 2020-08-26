@@ -294,7 +294,8 @@ def get_correction(
     else:
         rimofile = RIMOFILE_HFI
         detfilter = det.upper()
-        cfreq = np.float(det[0:3]) * 1e9
+        cfreq_string = det[0:3] if not det.startswith("F") else det[1:4]
+        cfreq = np.float(cfreq_string) * 1e9
 
     try:
         hdulist = pf.open(rimofile)
