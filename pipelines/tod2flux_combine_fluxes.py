@@ -45,6 +45,12 @@ def parse_arguments():
     parser.add_argument(
         "--mode", default="LinFit4", help="Fit mode",
     )
+    parser.add_argument(
+        "--nfreq-combine",
+        default=3,
+        type=int,
+        help="Number of frequencies to combine into one datapoint",
+    )
     args = parser.parse_args()
     print("All parameters:")
     print(args, flush=True)
@@ -91,6 +97,7 @@ def main():
         mode=args.mode,
         target_dict=target_dict,
         bgmap=bgmap,
+        nfreq_combine=args.nfreq_combine,
     )
 
     # Process the database
@@ -109,7 +116,9 @@ def main():
         print("target =", target, ", fits =", len(all_fits))
         fitter.detsets = False
         color_corrections, color_correction_errors = fitter.fit(
-            target, pol=True, fname="results_{}.csv".format(target),
+            target,
+            pol=True,
+            fname="results_{}_nfreq={}.csv".format(target, args.nfreq_combine),
         )
         """
         fitter.detsets = True

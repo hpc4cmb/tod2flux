@@ -28,16 +28,19 @@ def solve_IQU_and_slope(
 
     x0 = np.array([np.mean(data), 0])
 
-    result = scipy.optimize.least_squares(
-        get_resid,
-        x0,
-        method="lm",
-        args=(pointing, data, relative_freq),
-        max_nfev=10000,
-        ftol=1e-12,
-        xtol=1e-12,
-        gtol=1e-12,
-    )
+    try:
+        result = scipy.optimize.least_squares(
+            get_resid,
+            x0,
+            method="lm",
+            args=(pointing, data, relative_freq),
+            max_nfev=10000,
+            ftol=1e-12,
+            xtol=1e-12,
+            gtol=1e-12,
+        )
+    except ValueError:
+        return False
     if not result.success:
         return False
 
@@ -207,8 +210,9 @@ class FluxFitter:
         mode(string) : Fit mode
         target_dict(dict) :  Dictionary to use to replace target names
              in the database
-        do_freqpairs(bool) :  Solve the polarized flux at individual
-            frequencies AND using pairs of adjacent frequencies
+        nfreq_combine(int) :  Number of frequencies to average over in
+            measuring the IQU flux.  If greater than 1, implies fitting
+            for a spectral slope across the frequencies
 
     """
 
@@ -223,7 +227,7 @@ class FluxFitter:
         mode="LinFit4",
         target_dict=None,
         bgmap=None,
-        do_freqpairs=True,
+        nfreq_combine=1,
     ):
         self.database = database
         self.scan_length = scan_length
@@ -240,7 +244,7 @@ class FluxFitter:
             npix = self.sorted_bgmap.size
             self.bgmin = self.sorted_bgmap[0]
             self.bgmax = self.sorted_bgmap[int(npix * 0.85)]
-        self.do_freqpairs = do_freqpairs
+        self.nfreq_combine = nfreq_combine
         return
 
     def _rotate_pol(self, theta_in, phi_in, psi_in, coord_in):
@@ -334,142 +338,86 @@ class FluxFitter:
         flux = {}
         flux_err = {}
         plot_data = PlotData()
-        last_freq = None
-        last_pointing = None
-        last_data = None
-        last_error = None
+        last_freqs = []
+        last_pointings = []
+        last_datas = []
+        last_errors = []
         for freq_key in sorted(all_pointing):
-            for do_pair in True, False:
-                if do_pair:
-                    freq = np.mean(all_frequency[freq_key])
-                    self.freqs.add(int(freq))
-                    all_pointing[freq_key] = np.vstack(all_pointing[freq_key])
-                    all_data[freq_key] = np.array(all_data[freq_key])
-                    all_error[freq_key] = np.array(all_error[freq_key])
-                    scan = freqscan[freq_key]
+            freq = np.mean(all_frequency[freq_key])
+            self.freqs.add(int(freq))
+            all_pointing[freq_key] = np.vstack(all_pointing[freq_key])
+            all_data[freq_key] = np.array(all_data[freq_key])
+            all_error[freq_key] = np.array(all_error[freq_key])
+            scan = freqscan[freq_key]
 
-                    pointing = all_pointing[freq_key]
-                    data = all_data[freq_key]
-                    error = all_error[freq_key]
-                    relative_freq = None
+            pointing = all_pointing[freq_key]
+            data = all_data[freq_key]
+            error = all_error[freq_key]
+            relative_freq = None
 
-                    last_last_freq = last_freq
-                    last_last_pointing = last_pointing
-                    last_last_data = last_data
-                    last_last_error = last_error
+            last_freqs.append(freq)
+            last_pointings.append(pointing)
+            last_datas.append(data)
+            last_errors.append(error)
+            nfreq = len(last_freqs)
 
-                    last_freq = freq
-                    last_pointing = pointing
-                    last_data = data
-                    last_error = error
+            if nfreq < self.nfreq_combine:
+                continue
 
-                    if not self.do_freqpairs or last_last_data is None:
-                        continue
+            ind = slice(nfreq - self.nfreq_combine, nfreq)
+            freqs = []
+            for i in range(nfreq - self.nfreq_combine, nfreq):
+                freqs.append(np.ones(last_datas[i].size) * last_freqs[i])
+            freqs = np.hstack(freqs)
+            pointing = np.vstack(last_pointings[ind])
+            data = np.hstack(last_datas[ind])
+            error = np.hstack(last_errors[ind])
 
-                    if noiseweight:
-                        freq = (
-                            np.sum(last_last_freq / last_last_error ** 2)
-                            + np.sum(last_freq / last_error ** 2)
-                        ) / (
-                            np.sum(1 / last_last_error ** 2)
-                            + np.sum(1 / last_error ** 2)
-                        )
-                    else:
-                        freq = 0.5 * (last_last_freq + last_freq)
-                    key = "{}+{}".format(int(last_last_freq), int(last_freq))
-                    #key = int(freq)
-                    pointing = np.vstack([last_last_pointing, last_pointing])
-                    data = np.hstack([last_last_data, last_data])
-                    error = np.hstack([last_last_error, last_error])
-                    relative_freq = (
-                        np.hstack(
-                            [
-                                np.ones(last_last_data.size) * last_last_freq,
-                                np.ones(last_data.size) * last_freq,
-                            ]
-                        )
-                        / freq
-                    )
+            if noiseweight:
+                freq = np.sum(freqs / error ** 2) / np.sum(1 / error ** 2)
+            else:
+                freq = np.mean(last_freqs[ind])
+            key = None
+            for f in last_freqs[ind]:
+                if key is None:
+                    key = str(int(f))
                 else:
-                    key = str(freq_key)
-                    pointing = last_pointing
-                    data = last_data
-                    error = last_error
-                    freq = last_freq
-                    relative_freq = None
+                    key += "+" + str(int(f))
+            relative_freq = freqs / freq
 
-                print(
-                    "Solving for flux with {} at {} GHz using {} samples".format(
-                        key, freq, data.size
-                    )
+            print(
+                "Solving for flux with {} at {} GHz using {} samples".format(
+                    key, freq, data.size
                 )
-                if do_pair:
-                    success = solve_IQU_and_slope(
-                        pointing,
-                        error,
-                        data,
-                        relative_freq,
-                        noiseweight,
-                        flux,
-                        flux_err,
-                        key,
-                    )
-                else:
-                    success = solve_IQU(
-                        pointing, error, data, noiseweight, flux, flux_err, key
-                    )
-                if not success:
-                    continue
-                print("{} {}GHz".format(key, freq))
-                print("  time = {}".format(scan.datetime()))
-                print(
-                    "  flux = {} +- {}".format(
-                        flux[key], np.sqrt(np.diag(flux_err[key]))
-                    )
+            )
+            if nfreq > 1:
+                success = solve_IQU_and_slope(
+                    pointing,
+                    error,
+                    data,
+                    relative_freq,
+                    noiseweight,
+                    flux,
+                    flux_err,
+                    key,
                 )
-                if results is not None:
-                    # scale = 1e3  # mJy
-                    I, Q, U = flux[key][:3]  # * scale
-                    I_err, Q_err, U_err = np.sqrt(np.diag(flux_err[key][:3]))  # * scale
-                    (
-                        _,
-                        I_low,
-                        I_high,
-                        p,
-                        p_low,
-                        p_high,
-                        angle,
-                        angle_low,
-                        angle_high,
-                    ) = self._derive_pol_bayes(flux[key][:3], flux_err[key][:3])
-                    # p, p_low, p_high, angle, angle_err = self._derive_pol(
-                    #    I, I_err, Q, Q_err, U, U_err
-                    # )
-                    scale = 1e3  # mJy
-                    results.write(
-                        "{:>12}, {:12.3f}, {:>26}, "
-                        "{:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, "
-                        "{:12.4f}, {:12.4f}, {:12.4f}, {:13.3f}, {:10.3f}, {:10.3f}\n".format(
-                            key,
-                            freq,
-                            scan.date(),
-                            I * scale,
-                            I_err * scale,
-                            Q * scale,
-                            Q_err * scale,
-                            U * scale,
-                            U_err * scale,
-                            p,
-                            p_low,
-                            p_high,
-                            np.degrees(angle),
-                            np.degrees(angle_low),
-                            np.degrees(angle_high),
-                        )
-                    )
-                plot_data.append(
-                    freq,
-                    I,
+            else:
+                success = solve_IQU(
+                    pointing, error, data, noiseweight, flux, flux_err, key
+                )
+            if not success:
+                continue
+            print("{} {}GHz".format(key, freq))
+            print("  time = {}".format(scan.datetime()))
+            print(
+                "  flux = {} +- {}".format(flux[key], np.sqrt(np.diag(flux_err[key])))
+            )
+            if results is not None:
+                # scale = 1e3  # mJy
+                I, Q, U = flux[key][:3]  # * scale
+                I_err, Q_err, U_err = np.sqrt(np.diag(flux_err[key][:3]))  # * scale
+                (
+                    _,
                     I_low,
                     I_high,
                     p,
@@ -478,7 +426,35 @@ class FluxFitter:
                     angle,
                     angle_low,
                     angle_high,
+                ) = self._derive_pol_bayes(flux[key][:3], flux_err[key][:3])
+                # p, p_low, p_high, angle, angle_err = self._derive_pol(
+                #    I, I_err, Q, Q_err, U, U_err
+                # )
+                scale = 1e3  # mJy
+                results.write(
+                    "{:>12}, {:12.3f}, {:>26}, "
+                    "{:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, "
+                    "{:12.4f}, {:12.4f}, {:12.4f}, {:13.3f}, {:10.3f}, {:10.3f}\n".format(
+                        key,
+                        freq,
+                        scan.date(),
+                        I * scale,
+                        I_err * scale,
+                        Q * scale,
+                        Q_err * scale,
+                        U * scale,
+                        U_err * scale,
+                        p,
+                        p_low,
+                        p_high,
+                        np.degrees(angle),
+                        np.degrees(angle_low),
+                        np.degrees(angle_high),
+                    )
                 )
+            plot_data.append(
+                freq, I, I_low, I_high, p, p_low, p_high, angle, angle_low, angle_high,
+            )
 
         return flux, flux_err, plot_data
 
@@ -684,18 +660,29 @@ class FluxFitter:
                 plot_data.freq * 1.02 ** iscan
             )  # Stagger data points for readability
             colors = [None] + [
-                "tab:blue",
-                "tab:orange",
-                "tab:green",
-                "tab:red",
-                "tab:purple",
-                "tab:brown",
-                "tab:pink",
-                "tab:gray",
-                "tab:olive",
-                "tab:cyan",
+                '#006BA4',
+                '#FF800E',
+                '#ABABAB',
+                '#595959',
+                '#5F9ED1',
+                '#C85200',
+                '#898989',
+                '#A2C8EC',
+                '#FFBC79',
+                '#CFCFCF',
+                #"tab:blue",
+                #"tab:orange",
+                #"tab:green",
+                #"tab:red",
+                #"tab:purple",
+                #"tab:brown",
+                #"tab:pink",
+                #"tab:gray",
+                #"tab:olive",
+                #"tab:cyan",
             ] * 3
             color = colors[iscan]
+            #color = None  # Use the default color cycle
         else:
             plot_freq = plot_data.freq
             color = "black"
@@ -787,6 +774,7 @@ class FluxFitter:
             ssingle = "single"
         else:
             ssingle = "combined"
+        #plt.style.use("tableau-colorblind10")
         fig2 = plt.figure(figsize=[18, 12])
         fig2.suptitle("{}, {}".format(target, ssingle))
         ax = fig2.add_subplot(1, 1, 1)
@@ -832,7 +820,9 @@ class FluxFitter:
         )
         ax.grid(True)
         ax.set_ylim([0.8, 1.2])
-        fname = "color_correction_{}_{}{}.png".format(target, ssingle, ccstring)
+        fname = "color_correction_{}_{}{}_nfreq={}.png".format(
+            target, ssingle, ccstring, self.nfreq_combine
+        )
         plt.savefig(fname)
         plt.close()
         print("Color correction saved in {}".format(fname))
@@ -942,6 +932,8 @@ class FluxFitter:
         # Each entry is a list of Fit objects
         all_fits = self.database.targets[target]
         scans = self.find_scans(all_fits)
+        #plt.style.use("tableau-colorblind10")
+        #plt.style.use("seaborn-colorblind")
         fig = plt.figure(figsize=[18, 12])
         axes = []
         for i in range(3):
@@ -1085,7 +1077,9 @@ class FluxFitter:
         hp.graticule(22.5, verbose=False, color="w")
         hp.projplot(theta, phi, "ro", coord=coord)
 
-        fname = "flux_fit_{}{}.png".format(target, ccstring)
+        fname = "flux_fit_{}{}_nfreq={}.png".format(
+            target, ccstring, self.nfreq_combine
+        )
         plt.savefig(fname)
         plt.close()
         print("Fit saved in {}".format(fname), flush=True)
