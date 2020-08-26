@@ -294,6 +294,7 @@ def get_correction(
     else:
         rimofile = RIMOFILE_HFI
         detfilter = det.upper()
+        # Detectors are named e.g. 217-7B, frequency averaged e.g. F217
         cfreq_string = det[0:3] if not det.startswith("F") else det[1:4]
         cfreq = np.float(cfreq_string) * 1e9
 
