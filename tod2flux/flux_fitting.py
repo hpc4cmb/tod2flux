@@ -175,6 +175,14 @@ class Scan:
         """ Return a string representation of the time span """
         return "{} -- {}".format(to_date(self.start), to_date(self.stop))
 
+    def start_date(self):
+        """ Return a string representation of the start date """
+        return "{}".format(to_date(self.start))
+
+    def stop_date(self):
+        """ Return a string representation of the stop date """
+        return "{}".format(to_date(self.stop))
+
     def append(self, fit):
         if self.start > fit.start_time:
             self.start = fit.start_time
@@ -432,12 +440,13 @@ class FluxFitter:
                 # )
                 scale = 1e3  # mJy
                 results.write(
-                    "{:>12}, {:12.3f}, {:>26}, "
+                    "{:>12}, {:12.3f}, {:>10}, {:>10}, "
                     "{:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, {:12.1f}, {:13.1f}, "
                     "{:12.4f}, {:12.4f}, {:12.4f}, {:13.3f}, {:10.3f}, {:10.3f}\n".format(
                         key,
                         freq,
-                        scan.date(),
+                        scan.start_date(),
+                        scan.stop_date(),
                         I * scale,
                         I_err * scale,
                         Q * scale,
@@ -555,25 +564,22 @@ class FluxFitter:
 
         # Replace the polarization fraction estimate using the asymptotic estimator
 
-        if np.abs(Qerr ** 2 - Uerr ** 2) < 1e-6:
-            noise_bias = Qerr * Uerr / I ** 2
-        else:
-            rho = flux_err[1, 2] / np.sqrt(flux_err[1, 1] * flux_err[2, 2])
-            theta = 0.5 * np.arctan2(2 * rho * Qerr * Uerr, Qerr ** 2 - Uerr ** 2)
-            sigma_Qsquared = (
-                (Qerr * np.cos(theta)) ** 2
-                + (Uerr * np.sin(theta)) ** 2
-                + rho * Qerr * Uerr * np.sin(2 * theta)
-            )
-            sigma_Usquared = (
-                (Qerr * np.sin(theta)) ** 2
-                + (Uerr * np.cos(theta)) ** 2
-                - rho * Qerr * Uerr * np.sin(2 * theta)
-            )
-            noise_bias = (
-                sigma_Usquared * np.cos(2 * angle - theta) ** 2
-                + sigma_Qsquared * np.sin(2 * angle - theta) ** 2
-            ) / I ** 2
+        rho = flux_err[1, 2] / np.sqrt(flux_err[1, 1] * flux_err[2, 2])
+        theta = 0.5 * np.arctan2(2 * rho * Qerr * Uerr, Qerr ** 2 - Uerr ** 2)
+        sigma_Qsquared = (
+            (Qerr * np.cos(theta)) ** 2
+            + (Uerr * np.sin(theta)) ** 2
+            + rho * Qerr * Uerr * np.sin(2 * theta)
+        )
+        sigma_Usquared = (
+            (Qerr * np.sin(theta)) ** 2
+            + (Uerr * np.cos(theta)) ** 2
+            - rho * Qerr * Uerr * np.sin(2 * theta)
+        )
+        noise_bias = (
+            sigma_Usquared * np.cos(2 * angle - theta) ** 2
+            + sigma_Qsquared * np.sin(2 * angle - theta) ** 2
+        ) / I ** 2
 
         if p ** 2 > noise_bias and np.amax(pcut1) < 0.4:
             p = np.sqrt(p ** 2 - noise_bias)
@@ -942,12 +948,13 @@ class FluxFitter:
         results = open(fname, "w")
         results.write("# Target = {}\n".format(name))
         results.write(
-            "# {:12}, {:>10}, {:>26}, "
+            "# {:12}, {:>10}, {:>10}, {:>10}, "
             "{:>12}, {:>13}, {:>12}, {:>13}, {:>12}, {:>13},"
             "{:>12}, {:>13}, {:>12}, {:>13}, {:>12}, {:>13}\n".format(
                 "band(s)",
                 "freq [GHz]",
-                "time",
+                "start",
+                "stop",
                 "I flux [mJy]",
                 "I error [mJy]",
                 "Q flux [mJy]",

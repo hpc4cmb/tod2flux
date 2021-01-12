@@ -380,6 +380,9 @@ def get_correction(
             slopes, ccs / np.polyval(corrpoly[det], slopes), kind="quadratic"
         )
 
+    correction["freq"] = freq
+    correction["trans"] = trans
+
     return correction
 
 
