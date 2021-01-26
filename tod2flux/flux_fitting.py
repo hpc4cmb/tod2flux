@@ -260,6 +260,7 @@ class FluxFitter:
         correct the polarization convention.
         """
         if coord_in.upper() != self.coord.upper():
+            """
             dtheta = 1e-6
 
             vec1_in = hp.dir2vec(theta_in, phi_in)
@@ -274,6 +275,22 @@ class FluxFitter:
             vec3 = hp.dir2vec(theta_out - dtheta, phi_out)
             ang = np.arccos(np.dot(vec2_out - vec1_out, vec3 - vec1_out) / dtheta ** 2)
             psi_out = psi_in + ang
+            """
+            # This calculation is a direct copy from TOAST
+            rot_coord = hp.rotator.get_coordconv_matrix([coord_in, self.coord])[0]
+            thetarot = hp.rotator.get_rotation_matrix([0, theta_in, 0], deg=False, eulertype="ZYZ")[0]
+            phirot = hp.rotator.get_rotation_matrix([-phi_in, 0, 0], deg=False, eulertype="ZYZ")[0]
+            psirot = hp.rotator.get_rotation_matrix([-psi_in, 0, 0], deg=False, eulertype="ZYZ")[0]
+            rot = np.dot(phirot, np.dot(thetarot, psirot))
+            rotmatrix = np.dot(rot_coord, rot)
+            XAXIS, YAXIS, ZAXIS = np.eye(3)
+            vdir = np.dot(rotmatrix, ZAXIS)
+            orient = np.dot(rotmatrix, XAXIS)
+            by = orient[0] * vdir[1] - orient[1] * vdir[0]
+            bx = (orient[0] * (-vdir[2] * vdir[0]) +
+                  orient[1] * (-vdir[2] * vdir[1]) +
+                  orient[2] * (vdir[0] ** 2 + vdir[1] ** 2))
+            psi_out = np.arctan2(by, bx)
         else:
             psi_out = psi_in
 
@@ -324,7 +341,6 @@ class FluxFitter:
                     error[key].append(params.flux_err * cc * self.net_corrections[det])
                 else:
                     error[key].append(params.flux_err * cc)
-                # error[key][-1] = error[key][-1] ** .5  # TEMPORARY
                 freqscan[key].append(fit)
         return
 
@@ -853,12 +869,9 @@ class FluxFitter:
                     cc = 1 / color_corrections[det]
                 else:
                     cc = 1
-                freqflux = flux[freq]
+                freqflux = flux[freq].copy()
                 freqflux_err = np.sqrt(np.diag(flux_err[freq]))
-                if fit.coord.upper() != self.coord.upper():
-                    psi = self._rotate_pol(fit.theta, fit.phi, fit.psi_pol, fit.coord)
-                else:
-                    psi = fit.psi_pol
+                psi = self._rotate_pol(fit.theta, fit.phi, fit.psi_pol, fit.coord)
                 eta = fit.pol_efficiency
                 params = fit.entries[self.mode]
                 if pol:

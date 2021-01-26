@@ -31,6 +31,21 @@ def parse_arguments():
         "--coord", default="C", help="Reference coordinate system [G,E,C]",
     )
     parser.add_argument(
+        "--pol-cosmo",
+        required=False,
+        action="store_false",
+        help="Use HEALPix polarization convention",
+        dest="IAU_pol",
+    )
+    parser.add_argument(
+        "--pol-IAU",
+        required=False,
+        action="store_true",
+        help="Use IAU polarization convention",
+        dest="IAU_pol",
+    )
+    parser.set_defaults(IAU_pol=True)
+    parser.add_argument(
         "--scan-length-days",
         default=30,
         type=np.float,
@@ -47,7 +62,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--nfreq-combine",
-        default=3,
+        default=1,
         type=int,
         help="Number of frequencies to combine into one datapoint",
     )
@@ -98,6 +113,7 @@ def main():
         target_dict=target_dict,
         bgmap=bgmap,
         nfreq_combine=args.nfreq_combine,
+        IAU_pol=args.IAU_pol,
     )
 
     # Process the database
