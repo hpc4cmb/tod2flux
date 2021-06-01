@@ -304,14 +304,11 @@ def get_correction(
         print("Failed to open {} : '{}'".format(rimofile, e))
         raise
 
-    found = False
     for hdu in hdulist:
         if detfilter in hdu.name:
-            found = True
             break
-
-    if not found:
-        raise Exception("Bandpass for {} not in {}".format(det, rimo))
+    else:
+        raise Exception(f"Bandpass for {det} not in {rimo}")
 
     correction = {}
     correction["cfreq"] = cfreq * 1e-9
@@ -347,7 +344,7 @@ def get_correction(
     # The calculation is a copy from the Hildebrandt and Macias-Perez IDL module
 
     nu_cmb = constants.k * TCMB / constants.h
-    alpha = 2.0 * constants.k ** 3 * TCMB ** 2 / constants.h ** 2 / constants.c ** 2
+    alpha = 2 * constants.k ** 3 * TCMB ** 2 / constants.h ** 2 / constants.c ** 2
 
     x = freq / nu_cmb
     db_dt = alpha * x ** 4 * np.exp(x) / (np.exp(x) - 1) ** 2

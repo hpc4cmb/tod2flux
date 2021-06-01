@@ -1,13 +1,19 @@
 import os
+import pickle
 import sys
 
 import healpy as hp
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+import pylab
 import scipy.optimize
 
 from .utilities import to_UTC, to_date, to_JD, to_MJD, to_DJD, DJDtoUNIX
+
+
+pylab.rc("text", usetex=True)
+pylab.rc("font", family="serif", size=16)
 
 
 def solve_IQU_and_slope(
@@ -307,6 +313,7 @@ class FluxFitter:
 
         for scan in scans:
             for fit in scan:
+                np.random.seed(np.int(fit.start_time + fit.frequency))
                 if self.mode not in fit.entries:
                     continue
                 det = fit.detector
@@ -353,10 +360,10 @@ class FluxFitter:
         freqscan,
         results=None,
         noiseweight=True,
+        iscan=None,
+        target=None,
     ):
         """ Solve for polarized flux in each frequency
-
-        noiseweight=False because it will promote T->P leakage.
         """
 
         flux = {}
@@ -437,9 +444,8 @@ class FluxFitter:
                 "  flux = {} +- {}".format(flux[key], np.sqrt(np.diag(flux_err[key])))
             )
             if results is not None:
-                # scale = 1e3  # mJy
-                I, Q, U = flux[key][:3]  # * scale
-                I_err, Q_err, U_err = np.sqrt(np.diag(flux_err[key][:3]))  # * scale
+                I, Q, U = flux[key][:3]
+                I_err, Q_err, U_err = np.sqrt(np.diag(flux_err[key][:3]))
                 (
                     _,
                     I_low,
@@ -450,7 +456,11 @@ class FluxFitter:
                     angle,
                     angle_low,
                     angle_high,
-                ) = self._derive_pol_bayes(flux[key][:3], flux_err[key][:3])
+                ) = self._derive_pol_bayes(
+                    flux[key][:3],
+                    flux_err[key][:3],
+                    savefile=None, # f"bayes_{target}_{key}_{iscan}.pck",
+                )
                 # p, p_low, p_high, angle, angle_err = self._derive_pol(
                 #    I, I_err, Q, Q_err, U, U_err
                 # )
@@ -483,7 +493,7 @@ class FluxFitter:
 
         return flux, flux_err, plot_data
 
-    def _derive_pol_bayes(self, flux, flux_err, quantile=0.68):
+    def _derive_pol_bayes(self, flux, flux_err, savefile=None):
         I, Q, U = flux
         Ierr, Qerr, Uerr = np.sqrt(np.diag(flux_err))
         if Q == 0 and U == 0:
@@ -501,8 +511,6 @@ class FluxFitter:
             )
         p = np.sqrt(Q ** 2 + U ** 2) / I
         angle = 0.5 * np.arctan2(U, Q)
-        if angle < 0:
-            angle += np.pi
         invcov = np.linalg.inv(flux_err)
         # scale the covariance to sensible units
         # scale = 1 / np.mean(np.diag(invcov))
@@ -537,16 +545,24 @@ class FluxFitter:
         pmin = max(0, p - nsigma * perr)
         pmax = p + nsigma * perr
         pvec = np.random.rand(n) * (pmax - pmin) + pmin
+        pvec[pvec < 0] = 0
+        pvec[pvec > 1] = 1
 
         angleerr = 0.5 / (Q ** 2 + U ** 2) * (np.abs(Q) * Uerr + np.abs(U) * Qerr)
-        anglemin = angle - nsigma * angleerr
-        anglemax = angle + nsigma * angleerr
+        if angleerr < np.radians(10):
+            anglemin = angle - nsigma * angleerr
+            anglemax = angle + nsigma * angleerr
+        else:
+            anglemin = angle - np.pi / 2
+            anglemax = angle + np.pi / 2
         anglevec = np.random.rand(n) * (anglemax - anglemin) + anglemin
 
         prob = likelihood(Ivec, pvec, anglevec)
         ind = np.argsort(prob)[::-1]
         sorted_prob = prob[ind]
         total_prob = np.sum(prob)
+
+        # 68% confidence region for polarization fraction
 
         i1sigma = 0
         cumulative_prob = 0
@@ -556,6 +572,8 @@ class FluxFitter:
         Icut1 = Ivec[ind][:i1sigma]
         pcut1 = pvec[ind][:i1sigma]
         anglecut1 = anglevec[ind][:i1sigma]
+
+        # 95% confidence region for polarization fraction
 
         i2sigma = 0
         cumulative_prob = 0
@@ -568,7 +586,7 @@ class FluxFitter:
 
         Imin = np.amin(Icut1)
         Imax = np.amax(Icut1)
-        if np.amin(pcut2) < 0.01:
+        if np.amin(pcut1) < 0.01:
             # No lower limit on polarization fraction, use two sigma upper limit
             pmin = 0
             pmax = np.amax(pcut2)
@@ -597,14 +615,19 @@ class FluxFitter:
             + sigma_Qsquared * np.sin(2 * angle - theta) ** 2
         ) / I ** 2
 
-        if p ** 2 > noise_bias and np.amax(pcut1) < 0.4:
+        if p ** 2 > noise_bias:
             p = np.sqrt(p ** 2 - noise_bias)
-            pmin = np.amin(pcut1)
-            pmax = np.amax(pcut1)
         else:
             p = 0
+        if p <= pmin:
             pmin = 0
             pmax = np.amax(pcut2)
+
+        if savefile is not None:
+            with open(savefile, "wb") as fout:
+                pickle.dump(
+                    [Ivec, pvec, anglevec, prob, I, p, angle], fout,
+                )
 
         return (I, Imin, Imax, p, pmin, pmax, angle, anglemin, anglemax)
 
@@ -620,7 +643,7 @@ class FluxFitter:
         U = np.atleast_1d(U)
         U_err = np.atleast_1d(U_err)
         p = np.sqrt(Q ** 2 + U ** 2) / I
-        angle = np.degrees(0.5 * np.arctan2(U, Q)) % 180
+        angle = np.degrees(0.5 * np.arctan2(U, Q))
         nmc = 1000
         n = I.size
         # Run a Monte Carlo to measure the bias on polarization fraction
@@ -671,6 +694,52 @@ class FluxFitter:
             new_freq.append(f)
             new_value.append(np.mean(value[ind]))
         return new_freq, new_value
+
+    def _plot_polarization_fraction(
+            self, ax, freq, pfrac, pfrac_err, color, iscan, scan, target,
+    ):
+        ax.set_title("Polarization fraction")
+        detected = pfrac - pfrac_err[0] > 1e-6
+        ax.errorbar(
+            freq[detected],
+            pfrac[detected],
+            [pfrac_err[0][detected], pfrac_err[1][detected]],
+            label="scan {} : {}".format(iscan, scan.date()),
+            fmt="o",
+            color=color,
+        )
+        undetected = np.logical_not(detected)
+        ax.errorbar(
+            freq[undetected],
+            pfrac[undetected] + pfrac_err[1][undetected],
+            0.02,
+            uplims=True,
+            #[pfrac_err[0][detected], pfrac_err[1][detected]],
+            label="scan {} : {}".format(iscan, scan.date()),
+            fmt="v",
+            color=color,
+        )
+        xx, yy = self._average_by_frequency(freq, pfrac)
+        ax.plot(xx, yy, color=color)
+        if target not in ["M1"]:
+            if True:
+                #def forward(x):
+                #    return np.tanh(x / np.pi)
+                #def inverse(x):
+                #    return np.arctanh(x) / np.pi
+                #ax.set_yscale("function", functions=(forward, inverse))
+                ax.set_yscale("symlog", linthresh=(0.3), linscale=2, subs=np.arange(8) + 2)
+                ax.set_ylim([-0.01, 1.2])
+                ax.set_yticks([0, 0.1, 0.2, 0.3, 1.0])
+                ax.set_yticklabels(["0", "0.1", "0.2", "0.3", "1.0"])
+            else:
+                ax.set_ylim([-0.01, 0.4])
+            #ax.axhline(0, color="k")
+            #ax.axhline(1, color="k")
+            # ax.set_yscale("log")
+        ax.set_ylabel("Polarization fraction")
+        ax.set_xlim([25, 999])
+        return
 
     def _plot_flux(self, axes, pol, iscan, plot_data, scan, target):
 
@@ -723,7 +792,8 @@ class FluxFitter:
         xx, yy = self._average_by_frequency(plot_freq, plot_data.I)
         axes[0].plot(xx, yy, color=color)
         axes[0].set_yscale("log")
-        axes[0].set_ylabel("Flux [Jy]")
+        axes[0].set_ylabel("Flux density [Jy]")
+        axes[0].set_xlim([25, 999])
         ymin, ymax = axes[0].get_ylim()
         # if ymin < 1e-1:
         axes[0].set_ylim(bottom=5e-2)
@@ -734,25 +804,23 @@ class FluxFitter:
             axes[0].set_ylim(top=1e2)
         else:
             axes[0].set_ylim(top=1e3)
+        if target == "M1":
+            axes[0].set_ylim([50, 500])
+            model = 1010.2 * np.array(xx) ** -.323
+            axes[0].plot(xx, model, "k--", zorder=100)
         if pol:
             plot_freq = plot_freq[plot_data.pol]
             # Polarization fraction
-            axes[1].set_title("Polarization fraction")
-            axes[1].errorbar(
+            self._plot_polarization_fraction(
+                axes[1],
                 plot_freq,
                 plot_data.p,
                 plot_data.p_err,
-                label="scan {} : {}".format(iscan, scan.date()),
-                fmt="o",
-                color=color,
+                color,
+                iscan,
+                scan,
+                target,
             )
-            xx, yy = self._average_by_frequency(plot_freq, plot_data.p)
-            axes[1].plot(xx, yy, color=color)
-            if target not in ["M1"]:
-                axes[1].set_ylim([-0.01, 0.4])
-                axes[1].axhline(0, color="k")
-                # axes[1].set_yscale("log")
-            axes[1].set_ylabel("Polarization fraction")
             # Polarization angle
             axes[2].set_title("Polarization angle, IAU = {}".format(self.IAU_pol))
             axes[2].errorbar(
@@ -766,11 +834,12 @@ class FluxFitter:
             xx, yy = self._average_by_frequency(plot_freq, plot_data.angle)
             axes[2].plot(xx, yy, color=color)
             if target not in ["M1"]:
-                axes[2].set_ylim([-30, 210])
-                for ang in 0, 180:
+                axes[2].set_ylim([-120, 120])
+                for ang in -90, 0, 90:
                     axes[2].axhline(ang, linestyle="--", color="k", zorder=0)
-                axes[2].set_yticks(np.arange(7) * 30)
+                axes[2].set_yticks(np.arange(7) * 30 - 90)
             axes[2].set_ylabel("Angle [deg]")
+            axes[2].set_xlim([25, 999])
         for ax in axes:
             ax.grid(True)
             ax.set_xscale("log")
@@ -954,12 +1023,15 @@ class FluxFitter:
         #plt.style.use("tableau-colorblind10")
         #plt.style.use("seaborn-colorblind")
         fig = plt.figure(figsize=[18, 12])
+        fig.subplots_adjust(
+            left=.1, bottom=0.1, right=0.9,top=0.9, wspace=0.15, hspace=0.25,
+        )
         axes = []
         for i in range(3):
             axes.append(fig.add_subplot(2, 2, 1 + i))
 
         results = open(fname, "w")
-        results.write("# Target = {}\n".format(name))
+        results.write("# Target = {}\n".format(name.replace("$", "")))
         results.write(
             "# {:12}, {:>10}, {:>10}, {:>10}, "
             "{:>12}, {:>13}, {:>12}, {:>13}, {:>12}, {:>13},"
@@ -1029,7 +1101,14 @@ class FluxFitter:
                 all_freqscan[key] += freqscan[key]
 
             flux, flux_err, plot_data = self._solve_data(
-                frequency, pointing, data, error, freqscan, results,
+                frequency,
+                pointing,
+                data,
+                error,
+                freqscan,
+                results,
+                iscan=iscan,
+                target=target,
             )
             if len(flux) == 0:
                 continue
@@ -1051,7 +1130,13 @@ class FluxFitter:
         if not variable:
 
             flux, flux_err, plot_data = self._solve_data(
-                all_frequency, all_pointing, all_data, all_error, all_freqscan, results
+                all_frequency,
+                all_pointing,
+                all_data,
+                all_error,
+                all_freqscan,
+                results,
+                target=target,
             )
             self._measure_residual(
                 scans,
@@ -1069,7 +1154,7 @@ class FluxFitter:
                 name, self.mode, variable, all_scan.date(), self.coord
             )
         )
-        plt.legend(loc="upper left", bbox_to_anchor=[1, 1])
+        plt.legend(loc="upper left", bbox_to_anchor=[1, 1], fontsize=14)
 
         theta = all_fits[0][0].theta
         phi = all_fits[0][0].phi
@@ -1095,7 +1180,9 @@ class FluxFitter:
             bgmap, cmap="magma", title="Position (Galactic)", sub=[2, 3, 6], cbar=False,
         )
         hp.graticule(22.5, verbose=False, color="w")
-        hp.projplot(theta, phi, "ro", coord=coord)
+        hp.projplot(theta, phi, "wo", ms=10, coord=coord)
+        hp.projplot(theta, phi, "ko", ms=6, coord=coord)
+        hp.projplot(theta, phi, "wo", ms=3, coord=coord)
 
         fname = "flux_fit_{}{}_nfreq={}.png".format(
             target, ccstring, self.nfreq_combine
