@@ -794,16 +794,18 @@ class FluxFitter:
         axes[0].set_yscale("log")
         axes[0].set_ylabel("Flux density [Jy]")
         axes[0].set_xlim([25, 999])
-        ymin, ymax = axes[0].get_ylim()
-        # if ymin < 1e-1:
-        axes[0].set_ylim(bottom=5e-2)
-        datamax = np.amax(plot_data.I + plot_data.I_err)
-        if max(ymax, datamax * 1.2) < 1.1e1:
-            axes[0].set_ylim(top=1e1)
-        elif max(ymax, datamax * 1.2) < 1.1e2:
-            axes[0].set_ylim(top=1e2)
-        else:
-            axes[0].set_ylim(top=1e3)
+        if True:
+            # Manipulate intensity flux vertical axis
+            ymin, ymax = axes[0].get_ylim()
+            # if ymin < 1e-1:
+            axes[0].set_ylim(bottom=5e-2)
+            datamax = np.amax(plot_data.I + plot_data.I_err)
+            if max(ymax, datamax * 1.2) < 1.1e1:
+                axes[0].set_ylim(top=1e1)
+            elif max(ymax, datamax * 1.2) < 1.1e2:
+                axes[0].set_ylim(top=1e2)
+            else:
+                axes[0].set_ylim(top=1e3)
         if target == "M1":
             axes[0].set_ylim([50, 500])
             model = 1010.2 * np.array(xx) ** -.323
