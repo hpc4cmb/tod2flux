@@ -1,0 +1,2 @@
+include tod2flux/planck/data/*fits
+include tod2flux/planck/data/*stokes

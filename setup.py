@@ -59,6 +59,7 @@ setup(
     url="https://github.com/hpc4cmb/tod2flux",
     packages=["tod2flux", "tod2flux.planck"],
     package_data={"todflux.planck": ["data/*fits", "data/*stokes"],},
+    include_package_data=True,
     ext_modules=extensions,
     scripts=scripts,
     license="BSD",
