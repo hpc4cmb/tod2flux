@@ -219,6 +219,8 @@ class FluxFitter:
             Healpix convention
         detsets(bool) : Split the fits into detector sets rather than by
             frequency
+        unit_corrections(dict) : dictionary of correction factors to
+             apply to the estimated flux densities
         net_corrections(dict) : dictionary of correction factors to
              apply to the estimated uncertainties
         mode(string) : Fit mode
@@ -237,6 +239,7 @@ class FluxFitter:
         coord="C",
         IAU_pol=True,
         detsets=True,
+        unit_corrections=None,
         net_corrections=None,
         mode="LinFit4",
         target_dict=None,
@@ -249,6 +252,7 @@ class FluxFitter:
         self.freqs = set()
         self.IAU_pol = IAU_pol
         self.detsets = detsets
+        self.unit_corrections = unit_corrections
         self.net_corrections = net_corrections
         self.mode = mode
         self.target_dict = target_dict
@@ -321,6 +325,8 @@ class FluxFitter:
                     cc = 1 / color_corrections[det]
                 else:
                     cc = 1
+                if self.unit_corrections is not None:
+                    cc *= self.unit_corrections[det]
                 freq = fit.frequency
                 detset = fit.detector_set
                 if self.detsets:
@@ -940,6 +946,8 @@ class FluxFitter:
                     cc = 1 / color_corrections[det]
                 else:
                     cc = 1
+                if self.unit_corrections is not None:
+                    cc *= self.unit_corrections[det]
                 freqflux = flux[freq].copy()
                 freqflux_err = np.sqrt(np.diag(flux_err[freq]))
                 psi = self._rotate_pol(fit.theta, fit.phi, fit.psi_pol, fit.coord)
