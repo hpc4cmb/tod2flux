@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 
 import astropy.io.fits as pf
@@ -41,7 +42,11 @@ TOPHATS = {
 
 
 def get_correction(
-    det, use_afactors=True, use_tophats=True, corrpoly=None, hfiver="204"
+        det,
+        use_afactors=False,
+        use_tophats=False,
+        corrpoly=None,
+        rescale_lfi_bandpass=True,
 ):
     """
     Return the bandpass corrections in a dictionary
@@ -62,25 +67,31 @@ def get_correction(
         correction['cc'] : color correction function for powerlaw spectra
         correction['cfreq'] : effective central frequency
     """
-    if "LFI" in det:
+    if "LFI" in det or "F0" in det:
         rimofile = RIMOFILE_LFI
-        detfilter = det[-3:].upper()
-        horn = int(detfilter[0:2])
-        if horn < 24:
+        if "F0" in det:
+            detfilter = re.compile(".*" + det[1:] + "$")
+            horn = 1000
+        else:
+            detfilter = re.compile(".*" + det[-3:].upper() + "$")
+            horn = int(det[-3:-1])
+        if det == "F070" or horn < 24:
             if use_afactors:
                 cfreq = 70.466941e9
                 mkmjy = 1.34401e-1
                 kcmb2krj = 0.880966
             else:
                 # cfreq = 70e9
+                # cfreq = 70.4e9  # 2013
                 cfreq = 70.466941e9
-        elif horn < 27:
+        elif det == "F044" or horn < 27:
             if use_afactors:
                 cfreq = 44.120803e9
                 mkmjy = 5.68877e-2
                 kcmb2krj = 0.951172
             else:
                 # cfreq = 44e9
+                # cfreq = 44.1e9  # 2013
                 cfreq = 44.120803e9
         else:
             if use_afactors:
@@ -89,6 +100,7 @@ def get_correction(
                 kcmb2krj = 0.979336
             else:
                 # cfreq = 30e9
+                # cfreq = 28.4e9  # 2013
                 cfreq = 28.455828e9
 
         if use_afactors and not use_tophats:
@@ -293,7 +305,7 @@ def get_correction(
 
     else:
         rimofile = RIMOFILE_HFI
-        detfilter = det.upper()
+        detfilter = re.compile(".*" + det.upper() + ".*")
         # Detectors are named e.g. 217-7B, frequency averaged e.g. F217
         cfreq_string = det[0:3] if not det.startswith("F") else det[1:4]
         cfreq = np.float(cfreq_string) * 1e9
@@ -301,14 +313,14 @@ def get_correction(
     try:
         hdulist = pf.open(rimofile)
     except OSError as e:
-        print("Failed to open {} : '{}'".format(rimofile, e))
+        print(f"Failed to open {rimofile} : '{e}'")
         raise
 
     for hdu in hdulist:
-        if detfilter in hdu.name:
+        if detfilter.match(hdu.name):
             break
     else:
-        raise Exception(f"Bandpass for {det} not in {rimo}")
+        raise Exception(f"Bandpass for {det} not in {rimofile}")
 
     correction = {}
     correction["cfreq"] = cfreq * 1e-9
@@ -322,6 +334,7 @@ def get_correction(
             freq = hdu.data.field(0) * 1e9  # Already in Hz
     else:
         freq = constants.c * hdu.data.field(0) * 1e2  # from 1/cm to Hz
+
     if use_tophats and det in TOPHATS:
         th = TOPHATS[det]
         trans = hdu.data.field(1) * 0
@@ -338,6 +351,15 @@ def get_correction(
 
     freq = freq[ind]
     trans = trans[ind]
+
+    # HFI and LFI use different definitions of the bandpass
+    # trans(f) \propto g(f) * lambda^2, where g(f) is recorded LFI RIMO.
+    #          = g(f) * (c / f)^2
+    if cfreq < 9e10 and rescale_lfi_bandpass:
+        # Translate the LFI units to HFI. Normalization is corrected later anyway.
+        trans /= freq ** 2
+        # pass
+
     # trans /= np.max(trans)
     trans /= scipy.integrate.simps(trans, freq)
 
@@ -366,9 +388,16 @@ def get_correction(
     # iras_nom = integrate.simps((cfreq / freq)**2 * trans, freq)
     for ialpha, alpha in enumerate(slopes):
         flux_int = scipy.integrate.simps((freq / cfreq) ** alpha * trans, freq)
-        # flux_int = integrate.simps((freq / cfreq)**alpha * (freq / cfreq)**-1 * trans, freq)
-        # flux_int = integrate.simps((freq / cfreq)**(alpha-1) * trans, freq)
         ccs[ialpha] = flux_int / iras_nom
+        """
+        # LFI definition
+        i_eff = np.argmin(np.abs(freq - cfreq))
+        ccs[ialpha] = \
+            scipy.integrate.simps(trans * db_dt / db_dt_rj, freq) / (
+                db_dt[i_eff] / db_dt_rj[i_eff] *
+                scipy.integrate.simps(trans * (freq / cfreq) ** (alpha - 2), freq)
+            )
+        """
 
     if corrpoly == None:
         correction["cc"] = scipy.interpolate.interp1d(slopes, ccs, kind="quadratic")
