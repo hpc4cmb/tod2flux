@@ -52,6 +52,9 @@ def parse_arguments():
         help="Maximum length of a scan in days",
     )
     parser.add_argument(
+        "--unit-corrections", default=None, help="unit correction file",
+    )
+    parser.add_argument(
         "--net-corrections", default=None, help="NET correction file",
     )
     parser.add_argument(
@@ -80,6 +83,12 @@ def main():
 
     database = tod2flux.Database(args.database)
 
+    # Optionally, load unit corrections
+    if args.unit_corrections:
+        unit_corrections = pickle.load(open(args.unit_corrections, "rb"))
+    else:
+        unit_corrections = None
+
     # Optionally, load NET corrections
     if args.net_corrections:
         net_corrections = pickle.load(open(args.net_corrections, "rb"))
@@ -100,6 +109,12 @@ def main():
 
     # Initialize the fitter
 
+    if not os.path.isfile("npipe6v20_857_map.fits"):
+        raise RuntimeError(
+            "This script requires npipe6v20_857_map.fits"
+            "to measure the foreground index. "
+            "You can find it in the Planck Legacy Archive."
+        )
     bgmap = hp.read_map("npipe6v20_857_map.fits")
     # bgmap[bgmap < 0] = 0
     # bgmap[bgmap > 6] = 6
@@ -108,6 +123,7 @@ def main():
         database,
         scan_length=args.scan_length_days,
         coord=args.coord,
+        unit_corrections=unit_corrections,
         net_corrections=net_corrections,
         mode=args.mode,
         target_dict=target_dict,
